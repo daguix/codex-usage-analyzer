@@ -68,6 +68,8 @@ fn breakdown_requires_days_and_emits_json() {
         360
     );
     assert_eq!(document["cached_input_tokens"], 60);
+    assert_eq!(document["output_tokens"], 90);
+    assert_eq!(document["reasoning_output_tokens"], 15);
 }
 
 #[test]

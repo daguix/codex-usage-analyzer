@@ -16,9 +16,21 @@ pub enum Category {
     Instructions,
     RepositoryCode,
     ToolOutputCode,
+    ToolOutputBuildTest,
+    ToolOutputSearchListing,
+    ToolOutputVersionControl,
+    ToolOutputPatchEdit,
+    ToolOutputWeb,
+    ToolOutputUiMedia,
+    ToolOutputProcessControl,
+    ToolOutputDataAnalysis,
+    ToolOutputSystemInfo,
+    ToolOutputDiagnostics,
+    ToolOutputShell,
     ToolOutputOther,
     UserPrompts,
     AssistantText,
+    AssistantReasoning,
     ToolCalls,
     CompactionSummary,
     Unknown,
@@ -29,10 +41,22 @@ impl Category {
         match self {
             Self::Instructions => "instructions / AGENTS.md",
             Self::RepositoryCode => "source / repository code",
-            Self::ToolOutputCode => "tool outputs: code / diffs",
+            Self::ToolOutputCode => "tool outputs: other code",
+            Self::ToolOutputBuildTest => "tool outputs: build / test / lint",
+            Self::ToolOutputSearchListing => "tool outputs: search / listings",
+            Self::ToolOutputVersionControl => "tool outputs: version control",
+            Self::ToolOutputPatchEdit => "tool outputs: patches / edits",
+            Self::ToolOutputWeb => "tool outputs: web / external data",
+            Self::ToolOutputUiMedia => "tool outputs: UI / media",
+            Self::ToolOutputProcessControl => "tool outputs: process control",
+            Self::ToolOutputDataAnalysis => "tool outputs: data / analysis",
+            Self::ToolOutputSystemInfo => "tool outputs: system / environment",
+            Self::ToolOutputDiagnostics => "tool outputs: errors / diagnostics",
+            Self::ToolOutputShell => "tool outputs: other shell",
             Self::ToolOutputOther => "tool outputs: other",
             Self::UserPrompts => "user prompts",
-            Self::AssistantText => "assistant text / reasoning",
+            Self::AssistantText => "assistant text",
+            Self::AssistantReasoning => "assistant reasoning",
             Self::ToolCalls => "tool calls",
             Self::CompactionSummary => "compaction / summary",
             Self::Unknown => "unknown / protocol overhead",
@@ -45,8 +69,12 @@ pub struct BreakdownRow {
     pub category: Category,
     pub estimated_input_tokens: u64,
     pub estimated_cached_input_tokens: u64,
+    pub estimated_output_tokens: u64,
+    pub reasoning_output_tokens: u64,
     pub input_percent: f64,
     pub cached_percent: f64,
+    pub output_percent: f64,
+    pub reasoning_percent: f64,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -57,6 +85,8 @@ pub struct Breakdown {
     pub invalid_lines: usize,
     pub input_tokens: u64,
     pub cached_input_tokens: u64,
+    pub output_tokens: u64,
+    pub reasoning_output_tokens: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -67,11 +97,21 @@ struct Item {
 
 #[derive(Debug, Default)]
 struct FileBreakdown {
-    totals: BTreeMap<Category, (u64, u64)>,
+    totals: BTreeMap<Category, CategoryTotals>,
     calls: usize,
     invalid_lines: usize,
     input_tokens: u64,
     cached_input_tokens: u64,
+    output_tokens: u64,
+    reasoning_output_tokens: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CategoryTotals {
+    input: u64,
+    cached_input: u64,
+    output: u64,
+    reasoning_output: u64,
 }
 
 pub fn analyze(root: &Path, since: DateTime<Utc>) -> Result<Breakdown> {
@@ -97,32 +137,45 @@ pub fn analyze(root: &Path, since: DateTime<Utc>) -> Result<Breakdown> {
         files: files.len(),
         ..Breakdown::default()
     };
-    let mut totals = BTreeMap::<Category, (u64, u64)>::new();
+    let mut totals = BTreeMap::<Category, CategoryTotals>::new();
     for file in parsed {
         let file = file?;
         result.calls += file.calls;
         result.invalid_lines += file.invalid_lines;
         result.input_tokens += file.input_tokens;
         result.cached_input_tokens += file.cached_input_tokens;
-        for (category, (input, cached)) in file.totals {
+        result.output_tokens += file.output_tokens;
+        result.reasoning_output_tokens += file.reasoning_output_tokens;
+        for (category, value) in file.totals {
             let total = totals.entry(category).or_default();
-            total.0 += input;
-            total.1 += cached;
+            total.input += value.input;
+            total.cached_input += value.cached_input;
+            total.output += value.output;
+            total.reasoning_output += value.reasoning_output;
         }
     }
     result.rows = Category::all()
         .into_iter()
         .map(|category| {
-            let (input, cached) = totals.get(&category).copied().unwrap_or_default();
+            let total = totals.get(&category).copied().unwrap_or_default();
             BreakdownRow {
                 category,
-                estimated_input_tokens: input,
-                estimated_cached_input_tokens: cached,
-                input_percent: percent(input, result.input_tokens),
-                cached_percent: percent(cached, result.cached_input_tokens),
+                estimated_input_tokens: total.input,
+                estimated_cached_input_tokens: total.cached_input,
+                estimated_output_tokens: total.output,
+                reasoning_output_tokens: total.reasoning_output,
+                input_percent: percent(total.input, result.input_tokens),
+                cached_percent: percent(total.cached_input, result.cached_input_tokens),
+                output_percent: percent(total.output, result.output_tokens),
+                reasoning_percent: percent(total.reasoning_output, result.reasoning_output_tokens),
             }
         })
-        .filter(|row| row.estimated_input_tokens > 0 || row.estimated_cached_input_tokens > 0)
+        .filter(|row| {
+            row.estimated_input_tokens > 0
+                || row.estimated_cached_input_tokens > 0
+                || row.estimated_output_tokens > 0
+                || row.reasoning_output_tokens > 0
+        })
         .collect();
     result
         .rows
@@ -131,14 +184,26 @@ pub fn analyze(root: &Path, since: DateTime<Utc>) -> Result<Breakdown> {
 }
 
 impl Category {
-    fn all() -> [Self; 9] {
+    fn all() -> [Self; 21] {
         [
             Self::Instructions,
             Self::RepositoryCode,
             Self::ToolOutputCode,
+            Self::ToolOutputBuildTest,
+            Self::ToolOutputSearchListing,
+            Self::ToolOutputVersionControl,
+            Self::ToolOutputPatchEdit,
+            Self::ToolOutputWeb,
+            Self::ToolOutputUiMedia,
+            Self::ToolOutputProcessControl,
+            Self::ToolOutputDataAnalysis,
+            Self::ToolOutputSystemInfo,
+            Self::ToolOutputDiagnostics,
+            Self::ToolOutputShell,
             Self::ToolOutputOther,
             Self::UserPrompts,
             Self::AssistantText,
+            Self::AssistantReasoning,
             Self::ToolCalls,
             Self::CompactionSummary,
             Self::Unknown,
@@ -194,6 +259,8 @@ fn analyze_file(path: &Path, since: DateTime<Utc>) -> Result<FileBreakdown> {
                 if timestamp.is_some_and(|timestamp| timestamp >= since) {
                     let input = number(usage, "input_tokens");
                     let cached = number(usage, "cached_input_tokens").min(input);
+                    let output = number(usage, "output_tokens");
+                    let reasoning = number(usage, "reasoning_output_tokens");
                     update_overhead_hint(&context, input, &mut protocol_overhead_hint);
                     attribute(
                         &context,
@@ -202,10 +269,20 @@ fn analyze_file(path: &Path, since: DateTime<Utc>) -> Result<FileBreakdown> {
                         protocol_overhead_hint,
                         &mut result.totals,
                     );
+                    attribute_output(
+                        &pending,
+                        output,
+                        reasoning,
+                        reasoning_is_included(usage),
+                        &mut result.totals,
+                    );
                     result.calls += 1;
                     result.input_tokens += input;
                     result.cached_input_tokens += cached;
+                    result.output_tokens += output;
+                    result.reasoning_output_tokens += reasoning;
                 }
+                materialize_reasoning(&mut pending, number(usage, "reasoning_output_tokens"));
                 append_compact(&mut context, pending.drain(..));
             }
             // Older rollout formats only have event_msg/token_count. Prefer
@@ -230,6 +307,8 @@ fn analyze_file(path: &Path, since: DateTime<Utc>) -> Result<FileBreakdown> {
                 if timestamp.is_some_and(|timestamp| timestamp >= since) {
                     let input = number(usage, "input_tokens");
                     let cached = number(usage, "cached_input_tokens").min(input);
+                    let output = number(usage, "output_tokens");
+                    let reasoning = number(usage, "reasoning_output_tokens");
                     update_overhead_hint(&context, input, &mut protocol_overhead_hint);
                     attribute(
                         &context,
@@ -238,10 +317,20 @@ fn analyze_file(path: &Path, since: DateTime<Utc>) -> Result<FileBreakdown> {
                         protocol_overhead_hint,
                         &mut result.totals,
                     );
+                    attribute_output(
+                        &pending,
+                        output,
+                        reasoning,
+                        reasoning_is_included(usage),
+                        &mut result.totals,
+                    );
                     result.calls += 1;
                     result.input_tokens += input;
                     result.cached_input_tokens += cached;
+                    result.output_tokens += output;
+                    result.reasoning_output_tokens += reasoning;
                 }
+                materialize_reasoning(&mut pending, number(usage, "reasoning_output_tokens"));
                 append_compact(&mut context, pending.drain(..));
             }
             _ => {}
@@ -277,7 +366,7 @@ fn ingest_response_item(
         }
         "reasoning" => {
             let tokens = text_fields(payload.get("summary")) + text_fields(payload.get("content"));
-            push_item(pending, Category::AssistantText, tokens);
+            push_item(pending, Category::AssistantReasoning, tokens);
         }
         "function_call" | "custom_tool_call" => {
             let name = payload.get("name").and_then(Value::as_str).unwrap_or("");
@@ -330,7 +419,7 @@ fn attribute(
     input: u64,
     cached: u64,
     protocol_overhead_hint: Option<u64>,
-    totals: &mut BTreeMap<Category, (u64, u64)>,
+    totals: &mut BTreeMap<Category, CategoryTotals>,
 ) {
     if input == 0 {
         return;
@@ -377,9 +466,69 @@ fn attribute(
         let item_cached = item.tokens.min(cached_left);
         cached_left -= item_cached;
         let total = totals.entry(item.category).or_default();
-        total.0 += item.tokens;
-        total.1 += item_cached;
+        total.input += item.tokens;
+        total.cached_input += item_cached;
     }
+}
+
+fn attribute_output(
+    pending: &[Item],
+    output: u64,
+    reasoning: u64,
+    reasoning_included: bool,
+    totals: &mut BTreeMap<Category, CategoryTotals>,
+) {
+    totals
+        .entry(Category::AssistantReasoning)
+        .or_default()
+        .reasoning_output += reasoning;
+    let reasoning_in_output = if reasoning_included {
+        reasoning.min(output)
+    } else {
+        0
+    };
+    totals
+        .entry(Category::AssistantReasoning)
+        .or_default()
+        .output += reasoning_in_output;
+    let remaining = output - reasoning_in_output;
+    if remaining == 0 {
+        return;
+    }
+    let visible: Vec<Item> = pending
+        .iter()
+        .copied()
+        .filter(|item| item.category != Category::AssistantReasoning && item.tokens > 0)
+        .collect();
+    let raw: u64 = visible.iter().map(|item| item.tokens).sum();
+    if raw == 0 {
+        totals.entry(Category::Unknown).or_default().output += remaining;
+        return;
+    }
+    for item in proportional_sizes(&visible, remaining, raw) {
+        totals.entry(item.category).or_default().output += item.tokens;
+    }
+}
+
+fn materialize_reasoning(pending: &mut Vec<Item>, reasoning: u64) {
+    if reasoning == 0 {
+        return;
+    }
+    if let Some(item) = pending
+        .iter_mut()
+        .rfind(|item| item.category == Category::AssistantReasoning)
+    {
+        item.tokens = item.tokens.max(reasoning);
+    } else {
+        push_item(pending, Category::AssistantReasoning, reasoning);
+    }
+}
+
+fn reasoning_is_included(usage: &Value) -> bool {
+    let input = number(usage, "input_tokens");
+    let output = number(usage, "output_tokens");
+    let total = number(usage, "total_tokens");
+    total == 0 || total == input.saturating_add(output)
 }
 
 fn update_overhead_hint(context: &[Item], input: u64, hint: &mut Option<u64>) {
@@ -416,7 +565,10 @@ fn append_compact(target: &mut Vec<Item>, items: impl IntoIterator<Item = Item>)
 }
 
 fn push_item(items: &mut Vec<Item>, category: Category, tokens: u64) {
-    if tokens == 0 && category != Category::CompactionSummary {
+    if tokens == 0
+        && category != Category::CompactionSummary
+        && category != Category::AssistantReasoning
+    {
         return;
     }
     if let Some(last) = items.last_mut().filter(|last| last.category == category) {
@@ -471,22 +623,220 @@ fn looks_like_instructions(text: &str) -> bool {
 }
 
 fn classify_tool_output(text: &str, call: Option<&(String, String)>) -> Category {
-    if !looks_like_code(text) {
-        return Category::ToolOutputOther;
-    }
-    let is_reader = call.is_some_and(|(name, input)| {
-        let haystack = format!("{name} {input}").to_ascii_lowercase();
-        [
-            "read", "view", "cat ", "sed ", "rg ", "grep ", "git diff", "get_file",
-        ]
-        .iter()
-        .any(|needle| haystack.contains(needle))
-    });
-    if is_reader {
+    let invocation = call
+        .map(|(name, input)| format!("{name} {input}").to_ascii_lowercase())
+        .unwrap_or_default();
+    let is_reader = contains_any(
+        &invocation,
+        &[
+            "read_file",
+            "get_file",
+            "open_file",
+            "list_files",
+            "cmd:cat ",
+            "cmd:\"cat ",
+            "cmd:sed ",
+            "cmd:\"sed ",
+            "cmd:rg ",
+            "cmd:\"rg ",
+            "cmd:grep ",
+            "cmd:\"grep ",
+            "cmd:head ",
+            "cmd:\"head ",
+            "cmd:tail ",
+            "cmd:\"tail ",
+            " cat ",
+            " sed ",
+            " rg ",
+            " grep ",
+            " head ",
+            " tail ",
+        ],
+    );
+    if is_reader && looks_like_code(text) {
         Category::RepositoryCode
-    } else {
+    } else if contains_any(
+        &invocation,
+        &["apply_patch", "write_file", "edit_file", "replace_in_file"],
+    ) || text.contains("diff --git ")
+    {
+        Category::ToolOutputPatchEdit
+    } else if is_build_or_test(&invocation) {
+        Category::ToolOutputBuildTest
+    } else if is_version_control(&invocation) {
+        Category::ToolOutputVersionControl
+    } else if contains_any(
+        &invocation,
+        &[
+            "web__run",
+            "search_query",
+            "image_query",
+            "cmd:curl ",
+            "cmd:\"curl ",
+            " curl ",
+            "cmd:wget ",
+            "cmd:\"wget ",
+            " wget ",
+            "createbrowsertab",
+            "gettab(",
+            "cua.",
+        ],
+    ) {
+        Category::ToolOutputWeb
+    } else if contains_any(
+        &invocation,
+        &["view_image", "imagegen", "emitimage", "generatedimage"],
+    ) {
+        Category::ToolOutputUiMedia
+    } else if is_reader
+        || contains_any(
+            &invocation,
+            &[
+                "cmd:find ",
+                "cmd:\"find ",
+                " find ",
+                "cmd:ls ",
+                "cmd:\"ls ",
+                " ls ",
+                "cmd:pwd",
+                "cmd:\"pwd",
+                "list_mcp_resources",
+            ],
+        )
+    {
+        Category::ToolOutputSearchListing
+    } else if contains_any(
+        &invocation,
+        &["write_stdin", "tools.wait", "wait_agent", "yield_control"],
+    ) {
+        Category::ToolOutputProcessControl
+    } else if contains_any(
+        &invocation,
+        &[
+            "cmd:jq ",
+            "cmd:\"jq ",
+            " jq ",
+            "cmd:python ",
+            "cmd:\"python ",
+            " python -c ",
+            "cmd:perl ",
+            "cmd:\"perl ",
+            " perl ",
+            "dataframe",
+            "query_database",
+        ],
+    ) {
+        Category::ToolOutputDataAnalysis
+    } else if contains_any(
+        &invocation,
+        &[
+            "cmd:env",
+            "cmd:\"env",
+            "cmd:which ",
+            "cmd:\"which ",
+            "cmd:du ",
+            "cmd:\"du ",
+            "cmd:df ",
+            "cmd:\"df ",
+            "cmd:ps ",
+            "cmd:\"ps ",
+            "cmd:stat ",
+            "cmd:\"stat ",
+            "nvidia-smi",
+            "rustc --version",
+            "node --version",
+        ],
+    ) {
+        Category::ToolOutputSystemInfo
+    } else if looks_like_diagnostic(text) {
+        Category::ToolOutputDiagnostics
+    } else if invocation.contains("exec_command") {
+        Category::ToolOutputShell
+    } else if looks_like_code(text) {
         Category::ToolOutputCode
+    } else {
+        Category::ToolOutputOther
     }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn is_build_or_test(invocation: &str) -> bool {
+    contains_any(
+        invocation,
+        &[
+            "cargo test",
+            "cargo build",
+            "cargo check",
+            "cargo clippy",
+            "cargo fmt",
+            "npm test",
+            "npm run",
+            "pnpm test",
+            "pnpm run",
+            "yarn test",
+            "yarn run",
+            "pytest",
+            "python -m pytest",
+            "go test",
+            "go build",
+            "dotnet test",
+            "dotnet build",
+            "mvn test",
+            "gradle test",
+            "./gradlew",
+            "make test",
+            "cmake --build",
+            "swift test",
+            "rustc ",
+        ],
+    )
+}
+
+fn is_version_control(invocation: &str) -> bool {
+    contains_any(
+        invocation,
+        &[
+            "cmd:git ",
+            "cmd:\"git ",
+            " git status",
+            " git diff",
+            " git show",
+            " git log",
+            " git add",
+            " git commit",
+        ],
+    )
+}
+
+fn looks_like_diagnostic(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    contains_any(
+        &lower,
+        &[
+            "\"iserror\":true",
+            "fatal:",
+            "error:",
+            "traceback (most recent call last)",
+            "permission denied",
+            "command not found",
+            "no such file or directory",
+        ],
+    ) || nonzero_exit_code(&lower)
+}
+
+fn nonzero_exit_code(text: &str) -> bool {
+    let Some((_, suffix)) = text.split_once("\"exit_code\":") else {
+        return false;
+    };
+    let value = suffix
+        .trim_start()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>();
+    !value.is_empty() && value != "0"
 }
 
 fn looks_like_code(text: &str) -> bool {
@@ -562,9 +912,12 @@ mod tests {
         ];
         let mut totals = BTreeMap::new();
         attribute(&context, 30, 15, None, &mut totals);
-        assert_eq!(totals[&Category::Instructions], (10, 10));
-        assert_eq!(totals[&Category::UserPrompts], (10, 5));
-        assert_eq!(totals[&Category::ToolCalls], (10, 0));
+        assert_eq!(totals[&Category::Instructions].input, 10);
+        assert_eq!(totals[&Category::Instructions].cached_input, 10);
+        assert_eq!(totals[&Category::UserPrompts].input, 10);
+        assert_eq!(totals[&Category::UserPrompts].cached_input, 5);
+        assert_eq!(totals[&Category::ToolCalls].input, 10);
+        assert_eq!(totals[&Category::ToolCalls].cached_input, 0);
     }
 
     #[test]
@@ -581,7 +934,61 @@ mod tests {
         ];
         let mut totals = BTreeMap::new();
         attribute(&context, 40, 35, Some(5), &mut totals);
-        assert_eq!(totals[&Category::CompactionSummary], (25, 20));
-        assert_eq!(totals[&Category::Unknown], (5, 5));
+        assert_eq!(totals[&Category::CompactionSummary].input, 25);
+        assert_eq!(totals[&Category::CompactionSummary].cached_input, 20);
+        assert_eq!(totals[&Category::Unknown].input, 5);
+        assert_eq!(totals[&Category::Unknown].cached_input, 5);
+    }
+
+    #[test]
+    fn tool_outputs_are_split_by_invocation() {
+        let build = (
+            "exec".to_owned(),
+            "tools.exec_command({cmd:\"cargo test\"})".to_owned(),
+        );
+        let search = (
+            "exec".to_owned(),
+            "tools.exec_command({cmd:\"rg -n foo src\"})".to_owned(),
+        );
+        let git = (
+            "exec".to_owned(),
+            "tools.exec_command({cmd:\"git status\"})".to_owned(),
+        );
+        assert_eq!(
+            classify_tool_output("test result: ok", Some(&build)),
+            Category::ToolOutputBuildTest
+        );
+        assert_eq!(
+            classify_tool_output("src/main.rs:12:foo", Some(&search)),
+            Category::ToolOutputSearchListing
+        );
+        assert_eq!(
+            classify_tool_output("On branch main", Some(&git)),
+            Category::ToolOutputVersionControl
+        );
+    }
+
+    #[test]
+    fn output_and_reasoning_are_attributed_separately() {
+        let pending = vec![
+            Item {
+                category: Category::AssistantText,
+                tokens: 10,
+            },
+            Item {
+                category: Category::ToolCalls,
+                tokens: 30,
+            },
+            Item {
+                category: Category::AssistantReasoning,
+                tokens: 0,
+            },
+        ];
+        let mut totals = BTreeMap::new();
+        attribute_output(&pending, 100, 20, true, &mut totals);
+        assert_eq!(totals[&Category::AssistantReasoning].output, 20);
+        assert_eq!(totals[&Category::AssistantReasoning].reasoning_output, 20);
+        assert_eq!(totals[&Category::AssistantText].output, 20);
+        assert_eq!(totals[&Category::ToolCalls].output, 60);
     }
 }

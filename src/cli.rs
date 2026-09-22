@@ -186,27 +186,33 @@ fn parse_since_days(value: &str) -> Result<i64> {
 
 fn render_breakdown_table(result: &breakdown::Breakdown) -> String {
     let mut lines = vec![format!(
-        "Estimated context composition ({} model calls; input {}, cached {})",
+        "Estimated context composition ({} model calls; input {}, cached {}, output {}, reasoning {})",
         result.calls,
         format_count(result.input_tokens),
-        format_count(result.cached_input_tokens)
+        format_count(result.cached_input_tokens),
+        format_count(result.output_tokens),
+        format_count(result.reasoning_output_tokens),
     )];
     lines.push(format!(
-        "{:<31} {:>14} {:>8} {:>14} {:>8}",
-        "Category", "Input", "Input %", "Cached", "Cache %"
+        "{:<35} {:>12} {:>7} {:>12} {:>7} {:>12} {:>7} {:>12} {:>7}",
+        "Category", "Input", "In %", "Cached", "Cch %", "Output", "Out %", "Reasoning", "Rsn %",
     ));
     lines.push(format!(
-        "{:-<31} {:-<14} {:-<8} {:-<14} {:-<8}",
-        "", "", "", "", ""
+        "{:-<35} {:-<12} {:-<7} {:-<12} {:-<7} {:-<12} {:-<7} {:-<12} {:-<7}",
+        "", "", "", "", "", "", "", "", ""
     ));
     for row in &result.rows {
         lines.push(format!(
-            "{:<31} {:>14} {:>7.1}% {:>14} {:>7.1}%",
+            "{:<35} {:>12} {:>6.1}% {:>12} {:>6.1}% {:>12} {:>6.1}% {:>12} {:>6.1}%",
             row.category.label(),
             format_count(row.estimated_input_tokens),
             row.input_percent,
             format_count(row.estimated_cached_input_tokens),
             row.cached_percent,
+            format_count(row.estimated_output_tokens),
+            row.output_percent,
+            format_count(row.reasoning_output_tokens),
+            row.reasoning_percent,
         ));
     }
     lines.push("\nEstimate: reported token totals allocated from recorded context order; encrypted summaries and protocol/tool-schema overhead are inferred.".to_owned());
@@ -221,8 +227,12 @@ fn render_breakdown_csv(rows: &[breakdown::BreakdownRow]) -> Result<String> {
         "category",
         "estimated_input_tokens",
         "estimated_cached_input_tokens",
+        "estimated_output_tokens",
+        "reasoning_output_tokens",
         "input_percent",
         "cached_percent",
+        "output_percent",
+        "reasoning_percent",
     ])?;
     for row in rows {
         writer.serialize(row)?;

@@ -46,10 +46,16 @@ Supported report options include:
 - `--output PATH`
 
 `breakdown` reads context items but does not store them. It allocates the exact
-reported input and cached-input totals across categories using the recorded
-context order. Tokenization, encrypted compaction summaries, model-injected
-tool schemas, and protocol overhead make the category split an estimate.
+reported input, cached-input, output, and reasoning-output totals across
+categories using the recorded context order. Tokenization, encrypted
+compaction summaries, model-injected tool schemas, and protocol overhead make
+the category split an estimate.
+`reasoning_output_tokens` is shown separately; depending on the rollout schema,
+it may be a subset of `output_tokens` rather than an additional token count.
 Without `--since`, every available rollout is analyzed.
 Use `--format table|json|csv` and `--output PATH` as with reports. Code-looking
-output from file-reading/search commands is classified as repository source;
-code and diffs produced by other tools are kept in a separate category.
+output from file-reading/search commands is classified as repository source.
+Other tool output is split into build/test/lint, search/listings, version
+control, patches/edits, web/external data, UI/media, process control,
+data/analysis, system/environment, diagnostics, generic shell, and
+uncategorized output.
