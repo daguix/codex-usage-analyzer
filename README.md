@@ -25,6 +25,9 @@ codex-usage-analyzer report --last total --format json
 
 # Latest captured usage snapshot
 codex-usage-analyzer status
+
+# Estimated composition of input and cached-input context over seven days
+codex-usage-analyzer breakdown --since 7d
 ```
 
 The default rollout directory is `~/.codex/sessions`. Override it with
@@ -39,5 +42,10 @@ Supported report options include:
 - `--timezone IANA_NAME`
 - `--output PATH`
 
-The analyzer reads only session metadata, turn context, and `token_count`
-events. It does not store prompts, messages, or tool payloads.
+`breakdown` reads context items but does not store them. It allocates the exact
+reported input and cached-input totals across categories using the recorded
+context order. Tokenization, encrypted compaction summaries, model-injected
+tool schemas, and protocol overhead make the category split an estimate.
+Use `--format table|json|csv` and `--output PATH` as with reports. Code-looking
+output from file-reading/search commands is classified as repository source;
+code and diffs produced by other tools are kept in a separate category.

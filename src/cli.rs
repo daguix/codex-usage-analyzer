@@ -5,6 +5,7 @@ use chrono::{DateTime, Datelike, LocalResult, NaiveDate, NaiveDateTime, TimeZone
 use chrono_tz::Tz;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use crate::breakdown;
 use crate::ingest::{ScanResult, scan_rollouts};
 use crate::pricing::Pricing;
 use crate::report::{self, GroupBy, PeriodGroup, ReportFormat};
@@ -32,6 +33,8 @@ enum Command {
     Report(ReportArgs),
     /// Show the latest token usage snapshot.
     Status(StatusArgs),
+    /// Estimate which kinds of content make up model input and cached input.
+    Breakdown(BreakdownArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -86,6 +89,21 @@ struct StatusArgs {
     source: SourceArgs,
 }
 
+#[derive(Clone, Debug, Args)]
+struct BreakdownArgs {
+    #[command(flatten)]
+    source: SourceArgs,
+    /// Analyze model calls from the last N days (for example: 7d).
+    #[arg(long)]
+    since: String,
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = FormatArg::Table)]
+    format: FormatArg,
+    /// Write output to a file instead of stdout.
+    #[arg(long, short = 'o')]
+    output: Option<PathBuf>,
+}
+
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum PeriodArg {
     Day,
@@ -111,8 +129,114 @@ pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Command::Report(args)) => run_report(args),
         Some(Command::Status(args)) => run_status(args),
+        Some(Command::Breakdown(args)) => run_breakdown(args),
         None => run_report(cli.report),
     }
+}
+
+fn run_breakdown(args: BreakdownArgs) -> Result<()> {
+    // Validate the timezone for consistency with the other commands, although
+    // this relative range is an elapsed duration and therefore UTC-based.
+    parse_timezone(&args.source.timezone)?;
+    let days = parse_since_days(&args.since)?;
+    let since = Utc::now() - chrono::Duration::days(days);
+    let root = args
+        .source
+        .rollouts
+        .clone()
+        .unwrap_or_else(default_rollouts_dir);
+    let result = breakdown::analyze(&root, since)
+        .with_context(|| format!("failed to scan {}", root.display()))?;
+    if result.invalid_lines > 0 {
+        eprintln!(
+            "warning: ignored {} malformed JSONL line(s) across {} rollout file(s)",
+            result.invalid_lines, result.files
+        );
+    }
+    let output = match args.format {
+        FormatArg::Table => render_breakdown_table(&result),
+        FormatArg::Json => serde_json::to_string_pretty(&result)?,
+        FormatArg::Csv => render_breakdown_csv(&result.rows)?,
+    };
+    if let Some(path) = args.output {
+        std::fs::write(&path, format!("{output}\n"))
+            .with_context(|| format!("failed to write {}", path.display()))?;
+    } else {
+        println!("{output}");
+    }
+    Ok(())
+}
+
+fn parse_since_days(value: &str) -> Result<i64> {
+    let normalized = value.trim().to_ascii_lowercase();
+    let Some(number) = normalized.strip_suffix('d') else {
+        bail!("invalid --since value; expected a positive number of days such as 7d");
+    };
+    let days: i64 = number.parse().context("invalid --since day count")?;
+    if days <= 0 {
+        bail!("invalid --since value; day count must be positive");
+    }
+    Ok(days)
+}
+
+fn render_breakdown_table(result: &breakdown::Breakdown) -> String {
+    let mut lines = vec![format!(
+        "Estimated context composition ({} model calls; input {}, cached {})",
+        result.calls,
+        format_count(result.input_tokens),
+        format_count(result.cached_input_tokens)
+    )];
+    lines.push(format!(
+        "{:<31} {:>14} {:>8} {:>14} {:>8}",
+        "Category", "Input", "Input %", "Cached", "Cache %"
+    ));
+    lines.push(format!(
+        "{:-<31} {:-<14} {:-<8} {:-<14} {:-<8}",
+        "", "", "", "", ""
+    ));
+    for row in &result.rows {
+        lines.push(format!(
+            "{:<31} {:>14} {:>7.1}% {:>14} {:>7.1}%",
+            row.category.label(),
+            format_count(row.estimated_input_tokens),
+            row.input_percent,
+            format_count(row.estimated_cached_input_tokens),
+            row.cached_percent,
+        ));
+    }
+    lines.push("\nEstimate: reported token totals allocated from recorded context order; encrypted summaries and protocol/tool-schema overhead are inferred.".to_owned());
+    lines.join("\n")
+}
+
+fn render_breakdown_csv(rows: &[breakdown::BreakdownRow]) -> Result<String> {
+    let mut writer = csv::WriterBuilder::new()
+        .has_headers(false)
+        .from_writer(Vec::new());
+    writer.write_record([
+        "category",
+        "estimated_input_tokens",
+        "estimated_cached_input_tokens",
+        "input_percent",
+        "cached_percent",
+    ])?;
+    for row in rows {
+        writer.serialize(row)?;
+    }
+    Ok(String::from_utf8(writer.into_inner()?)?
+        .trim_end()
+        .to_owned())
+}
+
+fn format_count(value: u64) -> String {
+    let source = value.to_string();
+    source
+        .chars()
+        .enumerate()
+        .flat_map(|(index, character)| {
+            let comma = (index > 0 && (source.len() - index).is_multiple_of(3)).then_some(',');
+            comma.into_iter().chain(std::iter::once(character))
+        })
+        .collect()
 }
 
 fn run_report(args: ReportArgs) -> Result<()> {
