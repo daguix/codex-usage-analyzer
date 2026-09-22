@@ -28,6 +28,9 @@ codex-usage-analyzer status
 
 # Estimated composition of input and cached-input context over seven days
 codex-usage-analyzer breakdown --since 7d
+
+# All available rollouts
+codex-usage-analyzer breakdown
 ```
 
 The default rollout directory is `~/.codex/sessions`. Override it with
@@ -46,6 +49,7 @@ Supported report options include:
 reported input and cached-input totals across categories using the recorded
 context order. Tokenization, encrypted compaction summaries, model-injected
 tool schemas, and protocol overhead make the category split an estimate.
+Without `--since`, every available rollout is analyzed.
 Use `--format table|json|csv` and `--output PATH` as with reports. Code-looking
 output from file-reading/search commands is classified as repository source;
 code and diffs produced by other tools are kept in a separate category.

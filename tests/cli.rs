@@ -71,6 +71,28 @@ fn breakdown_requires_days_and_emits_json() {
 }
 
 #[test]
+fn breakdown_without_since_analyzes_everything() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "breakdown",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["calls"], 2);
+    assert_eq!(document["input_tokens"], 360);
+}
+
+#[test]
 fn breakdown_rejects_non_day_ranges() {
     let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
         .args(["breakdown", "--since", "12h"])

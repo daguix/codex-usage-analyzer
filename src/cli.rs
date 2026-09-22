@@ -93,9 +93,9 @@ struct StatusArgs {
 struct BreakdownArgs {
     #[command(flatten)]
     source: SourceArgs,
-    /// Analyze model calls from the last N days (for example: 7d).
+    /// Analyze only model calls from the last N days (for example: 7d).
     #[arg(long)]
-    since: String,
+    since: Option<String>,
     /// Output format.
     #[arg(long, value_enum, default_value_t = FormatArg::Table)]
     format: FormatArg,
@@ -138,8 +138,13 @@ fn run_breakdown(args: BreakdownArgs) -> Result<()> {
     // Validate the timezone for consistency with the other commands, although
     // this relative range is an elapsed duration and therefore UTC-based.
     parse_timezone(&args.source.timezone)?;
-    let days = parse_since_days(&args.since)?;
-    let since = Utc::now() - chrono::Duration::days(days);
+    let since = args
+        .since
+        .as_deref()
+        .map(parse_since_days)
+        .transpose()?
+        .map(|days| Utc::now() - chrono::Duration::days(days))
+        .unwrap_or(DateTime::<Utc>::MIN_UTC);
     let root = args
         .source
         .rollouts
