@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use chrono::{Datelike, Weekday};
+use chrono::{DateTime, Datelike, Utc, Weekday};
 use chrono_tz::Tz;
 use serde::Serialize;
 
@@ -44,6 +44,57 @@ pub struct ReportRow {
     pub cached_input_cost: f64,
     pub output_cost: f64,
     pub estimated_cost: f64,
+    #[serde(skip)]
+    pub dimensions: BTreeMap<String, String>,
+}
+
+#[derive(Serialize)]
+struct TelemetryReport<'a> {
+    schema_version: u8,
+    event_type: &'static str,
+    generated_at: DateTime<Utc>,
+    source: TelemetrySource<'a>,
+    window: TelemetryWindow,
+    aggregation: TelemetryAggregation<'a>,
+    records: Vec<TelemetryRecord<'a>>,
+}
+
+#[derive(Serialize)]
+struct TelemetrySource<'a> {
+    name: &'static str,
+    version: &'a str,
+}
+
+#[derive(Serialize)]
+struct TelemetryWindow {
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+struct TelemetryAggregation<'a> {
+    period: &'a str,
+    dimensions: &'a [&'a str],
+}
+
+#[derive(Serialize)]
+struct TelemetryRecord<'a> {
+    period: &'a str,
+    dimensions: &'a BTreeMap<String, String>,
+    metrics: TelemetryMetrics,
+}
+
+#[derive(Serialize)]
+struct TelemetryMetrics {
+    total_tokens: u64,
+    input_tokens: u64,
+    cached_input_tokens: u64,
+    output_tokens: u64,
+    reasoning_output_tokens: u64,
+    input_cost_usd: f64,
+    cached_input_cost_usd: f64,
+    output_cost_usd: f64,
+    estimated_cost_usd: f64,
 }
 
 pub fn aggregate(
@@ -75,18 +126,29 @@ pub fn aggregate(
             }
             PeriodGroup::Month => local.format("%Y-%m").to_string(),
         };
+        let dimensions = by
+            .iter()
+            .map(|group| {
+                let value = match group {
+                    GroupBy::Model => event.model.as_deref(),
+                    GroupBy::Effort => event.effort.as_deref(),
+                    GroupBy::Directory => event.directory.as_deref(),
+                    GroupBy::Session => event.session_id.as_deref(),
+                }
+                .unwrap_or("<unknown>")
+                .to_owned();
+                (group.name().to_owned(), value)
+            })
+            .collect::<BTreeMap<_, _>>();
         let group_key = if by.is_empty() {
             "all".to_owned()
         } else {
             by.iter()
                 .map(|group| {
-                    match group {
-                        GroupBy::Model => event.model.as_deref(),
-                        GroupBy::Effort => event.effort.as_deref(),
-                        GroupBy::Directory => event.directory.as_deref(),
-                        GroupBy::Session => event.session_id.as_deref(),
-                    }
-                    .unwrap_or("<unknown>")
+                    dimensions
+                        .get(group.name())
+                        .map(String::as_str)
+                        .unwrap_or("<unknown>")
                 })
                 .collect::<Vec<_>>()
                 .join(" / ")
@@ -96,6 +158,7 @@ pub fn aggregate(
             .or_insert_with(|| ReportRow {
                 period: period_key,
                 group: group_key,
+                dimensions,
                 ..ReportRow::default()
             });
         row.total_tokens += event.total_tokens;
@@ -116,6 +179,59 @@ pub fn aggregate(
         }
     }
     rows.into_values().collect()
+}
+
+impl GroupBy {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Effort => "effort",
+            Self::Directory => "directory",
+            Self::Session => "session",
+        }
+    }
+}
+
+pub fn render_telemetry(
+    rows: &[ReportRow],
+    window_start: Option<DateTime<Utc>>,
+    window_end: Option<DateTime<Utc>>,
+    period: &str,
+    dimensions: &[&str],
+) -> Result<String> {
+    let records = rows
+        .iter()
+        .map(|row| TelemetryRecord {
+            period: &row.period,
+            dimensions: &row.dimensions,
+            metrics: TelemetryMetrics {
+                total_tokens: row.total_tokens,
+                input_tokens: row.input_tokens,
+                cached_input_tokens: row.cached_input_tokens,
+                output_tokens: row.output_tokens,
+                reasoning_output_tokens: row.reasoning_output_tokens,
+                input_cost_usd: row.input_cost,
+                cached_input_cost_usd: row.cached_input_cost,
+                output_cost_usd: row.output_cost,
+                estimated_cost_usd: row.estimated_cost,
+            },
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&TelemetryReport {
+        schema_version: 1,
+        event_type: "codex.usage.report",
+        generated_at: Utc::now(),
+        source: TelemetrySource {
+            name: "codex-usage-analyzer",
+            version: env!("CARGO_PKG_VERSION"),
+        },
+        window: TelemetryWindow {
+            start: window_start,
+            end: window_end,
+        },
+        aggregation: TelemetryAggregation { period, dimensions },
+        records,
+    })?)
 }
 
 pub fn render(rows: &[ReportRow], include_group: bool, format: ReportFormat) -> Result<String> {

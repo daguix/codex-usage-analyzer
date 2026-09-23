@@ -40,6 +40,9 @@ codex-usage-analyzer --last 7d --by model,effort
 # JSON for all available rollouts
 codex-usage-analyzer report --last all --format json
 
+# Versioned JSON envelope for telemetry ingestion
+codex-usage-analyzer report --last 1h --by model,effort,directory,session --format telemetry-json
+
 # Latest captured usage snapshot
 codex-usage-analyzer status
 
@@ -61,12 +64,19 @@ Supported report options include:
 - `--today`, `--last`, `--from`, and `--to`
 - `--group all|day|week|month` (default: `all`)
 - `--by model|effort|directory|session`, with comma-separated dimensions such as `--by model,effort`
-- `--format table|json|csv`
+- `--format table|json|csv|telemetry-json`
 - `--timezone IANA_NAME`
 - `--output PATH`
 
-`latency` accepts the same range, grouping, format, timezone, and output options
-as `report`. It shows sample counts, averages, medians, and p95 values. Latency
+`telemetry-json` is available for `report`. It emits a versioned envelope with
+the effective time window, aggregation settings, structured dimensions, and
+numeric usage and cost metrics. Every dimension explicitly selected with
+`--by`, including `directory` and `session`, is included unchanged. The output
+contains no prompt, response, tool-output, or repository-file content.
+
+`latency` accepts the same range, grouping, timezone, and output options as
+`report`, with `table`, `json`, and `csv` formats. It shows sample counts,
+averages, medians, and p95 values. Latency
 fields are emitted in milliseconds in JSON and CSV; the table uses
 human-readable durations. Older rollouts may not contain latency measurements,
 so missing values are excluded from the sample counts and aggregates.

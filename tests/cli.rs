@@ -169,6 +169,50 @@ fn report_groups_usage_by_model_and_effort() {
 }
 
 #[test]
+fn report_emits_telemetry_json_with_structured_dimensions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "report",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "all",
+            "--by",
+            "model,effort,directory,session",
+            "--format",
+            "telemetry-json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["schema_version"], 1);
+    assert_eq!(document["event_type"], "codex.usage.report");
+    assert_eq!(document["window"]["start"], "2026-09-22T08:00:02Z");
+    assert_eq!(document["window"]["end"], "2026-09-22T09:00:01Z");
+    assert_eq!(document["aggregation"]["period"], "all");
+    assert_eq!(document["aggregation"]["dimensions"][2], "directory");
+    assert_eq!(
+        document["records"][0]["dimensions"]["model"],
+        "gpt-5.2-codex"
+    );
+    assert_eq!(
+        document["records"][0]["dimensions"]["directory"],
+        "/tmp/project-alpha"
+    );
+    assert_eq!(
+        document["records"][0]["dimensions"]["session"],
+        "session-alpha"
+    );
+    assert_eq!(document["records"][0]["metrics"]["total_tokens"], 155);
+    assert_eq!(document["records"][1]["metrics"]["total_tokens"], 310);
+}
+
+#[test]
 fn csv_has_one_header() {
     let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
         .args([

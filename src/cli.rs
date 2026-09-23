@@ -99,10 +99,10 @@ struct ReportArgs {
     #[arg(
         long,
         value_enum,
-        default_value_t = FormatArg::Table,
+        default_value_t = ReportFormatArg::Table,
         help = "Output format"
     )]
-    format: FormatArg,
+    format: ReportFormatArg,
     #[arg(long, short = 'o', help = "Write output to a file instead of stdout")]
     output: Option<PathBuf>,
 }
@@ -177,11 +177,41 @@ enum GroupArg {
     Session,
 }
 
+impl PeriodArg {
+    fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+        }
+    }
+}
+
+impl GroupArg {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Effort => "effort",
+            Self::Directory => "directory",
+            Self::Session => "session",
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum FormatArg {
     Table,
     Json,
     Csv,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum ReportFormatArg {
+    Table,
+    Json,
+    Csv,
+    TelemetryJson,
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -510,12 +540,18 @@ fn run_report(args: ReportArgs) -> Result<()> {
     let (start, end) = resolve_range(&args.range, timezone)?;
     let scan = scan(&args.source)?;
     emit_scan_warnings(&scan);
-    let events = scan.events.into_iter().filter(|event| {
-        start.is_none_or(|start| event.captured_at >= start)
-            && end.is_none_or(|end| event.captured_at <= end)
-    });
+    let events = scan
+        .events
+        .into_iter()
+        .filter(|event| {
+            start.is_none_or(|start| event.captured_at >= start)
+                && end.is_none_or(|end| event.captured_at <= end)
+        })
+        .collect::<Vec<_>>();
+    let window_start = start.or_else(|| events.iter().map(|event| event.captured_at).min());
+    let window_end = end.or_else(|| events.iter().map(|event| event.captured_at).max());
     let rows = report::aggregate(
-        events,
+        events.into_iter(),
         match args.group {
             PeriodArg::All => PeriodGroup::All,
             PeriodArg::Day => PeriodGroup::Day,
@@ -535,15 +571,28 @@ fn run_report(args: ReportArgs) -> Result<()> {
         timezone,
         &Pricing::default(),
     );
-    let output = report::render(
-        &rows,
-        !args.by.is_empty(),
-        match args.format {
-            FormatArg::Table => ReportFormat::Table,
-            FormatArg::Json => ReportFormat::Json,
-            FormatArg::Csv => ReportFormat::Csv,
-        },
-    )?;
+    let output = match args.format {
+        ReportFormatArg::TelemetryJson => {
+            let dimensions = args.by.iter().map(GroupArg::name).collect::<Vec<_>>();
+            report::render_telemetry(
+                &rows,
+                window_start,
+                window_end,
+                args.group.name(),
+                &dimensions,
+            )?
+        }
+        ReportFormatArg::Table | ReportFormatArg::Json | ReportFormatArg::Csv => report::render(
+            &rows,
+            !args.by.is_empty(),
+            match args.format {
+                ReportFormatArg::Table => ReportFormat::Table,
+                ReportFormatArg::Json => ReportFormat::Json,
+                ReportFormatArg::Csv => ReportFormat::Csv,
+                ReportFormatArg::TelemetryJson => unreachable!(),
+            },
+        )?,
+    };
     if let Some(path) = args.output {
         std::fs::write(&path, format!("{output}\n"))
             .with_context(|| format!("failed to write {}", path.display()))?;
