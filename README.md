@@ -5,6 +5,10 @@ reports token usage and estimated costs.
 The separate latency view reports end-to-end turn duration and time to first
 token (TTFT).
 
+Fast and lightweight: rollout files are processed in parallel, with no database
+or background service required. The optimized Linux x86-64 binary is about
+3.9 MB.
+
 ## Build
 
 ```bash
