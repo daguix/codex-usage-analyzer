@@ -1,13 +1,21 @@
 # Codex Usage Analyzer
 
-A small, database-free Rust CLI that reads Codex `rollout-*.jsonl` files and
-reports token usage and estimated costs.
-The separate latency view reports end-to-end turn duration and time to first
-token (TTFT).
+A fast, database-free Rust CLI for analyzing [OpenAI Codex CLI](https://github.com/openai/codex)
+usage, token consumption, estimated costs, latency, and context composition
+from local `rollout-*.jsonl` session files.
 
 Fast and lightweight: rollout files are processed in parallel, with no database
 or background service required. The optimized Linux x86-64 binary is about
 3.9 MB.
+
+## Features
+
+- Track Codex token usage and estimated API costs over custom time ranges
+- Group results by model, reasoning effort, directory, or session
+- Inspect end-to-end latency, time to first token (TTFT), medians, and p95
+- Analyze context composition and identify token-heavy tools and content
+- Export reports as human-readable tables, JSON, or CSV
+- Keep session data local with no database, account, or background service
 
 ## Build
 
