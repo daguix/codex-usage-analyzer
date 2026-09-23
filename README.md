@@ -26,7 +26,7 @@ codex-usage-analyzer --last 7d --by model
 codex-usage-analyzer --last 7d --by model,effort
 
 # JSON for all available rollouts
-codex-usage-analyzer report --last total --format json
+codex-usage-analyzer report --last all --format json
 
 # Latest captured usage snapshot
 codex-usage-analyzer status

@@ -61,7 +61,7 @@ struct RangeArgs {
     #[arg(
         long,
         conflicts_with_all = ["today", "from", "to"],
-        help = "Relative range such as 7d, 12h, 1m, 30min, or total"
+        help = "Relative range such as 7d, 12h, 1m, 30min, or all"
     )]
     last: Option<String>,
     #[arg(
@@ -626,12 +626,12 @@ fn resolve_range(args: &RangeArgs, timezone: Tz) -> Result<DateRange> {
 
 fn parse_last(value: &str, now: DateTime<Utc>, timezone: Tz) -> Result<DateRange> {
     let normalized = value.trim().to_ascii_lowercase();
-    if normalized == "total" {
+    if normalized == "all" {
         return Ok((None, None));
     }
     let digit_count = normalized.bytes().take_while(u8::is_ascii_digit).count();
     if digit_count == 0 || digit_count == normalized.len() {
-        bail!("invalid --last value; expected total, 7d, 12h, 1m, or 30min");
+        bail!("invalid --last value; expected all, 7d, 12h, 1m, or 30min");
     }
     let amount: i64 = normalized[..digit_count].parse()?;
     let start = match &normalized[digit_count..] {
@@ -702,6 +702,14 @@ mod tests {
         let month = parse_last("1m", now, tz).unwrap().0.unwrap();
         assert_eq!((now - minute).num_minutes(), 30);
         assert!(month < now - chrono::Duration::days(28));
+    }
+
+    #[test]
+    fn all_selects_the_entire_range() {
+        let tz: Tz = DEFAULT_TIMEZONE.parse().unwrap();
+        let now = Utc::now();
+        assert_eq!(parse_last("all", now, tz).unwrap(), (None, None));
+        assert!(parse_last("total", now, tz).is_err());
     }
 
     #[test]
