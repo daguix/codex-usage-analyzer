@@ -18,6 +18,14 @@ or background service required. The optimized Linux x86-64 binary is about
 - Export versioned, structured JSON for telemetry ingestion
 - Keep session data local with no database, account, or background service
 
+Cost estimates select the price that was effective on each event's UTC date.
+Historical price changes are sourced from the
+[OpenAI API changelog](https://developers.openai.com/api/docs/changelog), while
+current Codex rates come from the
+[ChatGPT rate card](https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing).
+When OpenAI publishes only an effective date, the new rate is applied from
+00:00 UTC on that date.
+
 ## Build
 
 ```bash

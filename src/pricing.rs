@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, NaiveDate, Utc};
+
 #[derive(Clone, Copy, Debug)]
 pub struct Rates {
     pub input: f64,
@@ -7,19 +9,21 @@ pub struct Rates {
     pub output: f64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PricePeriod {
+    effective_from: NaiveDate,
+    rates: Rates,
+}
+
 #[derive(Debug)]
 pub struct Pricing {
-    rates: HashMap<&'static str, Rates>,
+    rates: HashMap<&'static str, Vec<PricePeriod>>,
 }
 
 impl Default for Pricing {
     fn default() -> Self {
         let mut rates = HashMap::new();
         for (name, input, cached, output) in [
-            ("gpt-6-astra", 10.0, 1.0, 50.0),
-            ("gpt-5.6-sol", 4.0, 0.4, 20.0),
-            ("gpt-5.6-terra", 2.0, 0.2, 12.0),
-            ("gpt-5.6-luna", 0.2, 0.02, 1.2),
             ("gpt-5.2", 1.75, 0.175, 14.0),
             ("gpt-5.4", 2.5, 0.25, 15.0),
             ("gpt-5.4-mini", 0.75, 0.075, 4.5),
@@ -37,34 +41,61 @@ impl Default for Pricing {
         ] {
             rates.insert(
                 name,
-                Rates {
-                    input,
-                    cached,
-                    output,
-                },
+                vec![PricePeriod {
+                    effective_from: NaiveDate::MIN,
+                    rates: Rates {
+                        input,
+                        cached,
+                        output,
+                    },
+                }],
             );
         }
+        rates.insert("gpt-6-astra", vec![period(2026, 9, 3, 10.0, 1.0, 50.0)]);
+        rates.insert("gpt-6-sol", vec![period(2026, 9, 22, 2.0, 0.2, 10.0)]);
+        rates.insert("gpt-6-luna", vec![period(2026, 9, 22, 0.1, 0.01, 0.5)]);
+        rates.insert(
+            "gpt-5.6-sol",
+            vec![
+                period(2026, 7, 9, 5.0, 0.5, 30.0),
+                period(2026, 8, 21, 4.0, 0.4, 20.0),
+            ],
+        );
+        rates.insert(
+            "gpt-5.6-terra",
+            vec![
+                period(2026, 7, 9, 2.5, 0.25, 15.0),
+                period(2026, 7, 30, 2.0, 0.2, 12.0),
+            ],
+        );
+        rates.insert(
+            "gpt-5.6-luna",
+            vec![
+                period(2026, 7, 9, 1.0, 0.1, 6.0),
+                period(2026, 7, 30, 0.2, 0.02, 1.2),
+            ],
+        );
         Self { rates }
     }
 }
 
 impl Pricing {
-    pub fn rates_for(&self, model: &str) -> Option<Rates> {
+    pub fn rates_for(&self, model: &str, captured_at: DateTime<Utc>) -> Option<Rates> {
         let cleaned = model.trim();
-        if let Some(rates) = self.rates.get(cleaned) {
-            return Some(*rates);
+        if let Some(rates) = self.rates_at(cleaned, captured_at) {
+            return Some(rates);
         }
         if cleaned.ends_with(')')
             && let Some((base, _)) = cleaned.split_once(" (")
-            && let Some(rates) = self.rates.get(base)
+            && let Some(rates) = self.rates_at(base, captured_at)
         {
-            return Some(*rates);
+            return Some(rates);
         }
         let undated = strip_dated_suffix(cleaned);
-        if let Some(rates) = self.rates.get(undated) {
-            return Some(*rates);
+        if let Some(rates) = self.rates_at(undated, captured_at) {
+            return Some(rates);
         }
-        let alias = match cleaned {
+        let alias = match undated {
             "codex-auto-review" => "gpt-5.6-luna",
             "gpt-5.6" => "gpt-5.6-sol",
             "gpt-5-codex" => "gpt-5.2-codex",
@@ -72,7 +103,24 @@ impl Pricing {
             "gpt-5-pro" => "gpt-5.5-pro",
             _ => return None,
         };
-        self.rates.get(alias).copied()
+        self.rates_at(alias, captured_at)
+    }
+
+    fn rates_at(&self, model: &str, captured_at: DateTime<Utc>) -> Option<Rates> {
+        self.rates.get(model)?.iter().rev().find_map(|period| {
+            (period.effective_from <= captured_at.date_naive()).then_some(period.rates)
+        })
+    }
+}
+
+fn period(year: i32, month: u32, day: u32, input: f64, cached: f64, output: f64) -> PricePeriod {
+    PricePeriod {
+        effective_from: NaiveDate::from_ymd_opt(year, month, day).unwrap(),
+        rates: Rates {
+            input,
+            cached,
+            output,
+        },
     }
 }
 
@@ -93,5 +141,106 @@ fn strip_dated_suffix(value: &str) -> &str {
         &value[..split]
     } else {
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pricing;
+
+    fn at(value: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .to_utc()
+    }
+
+    #[test]
+    fn selects_sol_rates_by_capture_date() {
+        let pricing = Pricing::default();
+        let old = pricing
+            .rates_for("gpt-5.6-sol", at("2026-08-20T23:59:59Z"))
+            .unwrap();
+        let current = pricing
+            .rates_for("gpt-5.6-sol", at("2026-08-21T00:00:00Z"))
+            .unwrap();
+        assert_eq!((old.input, old.cached, old.output), (5.0, 0.5, 30.0));
+        assert_eq!(
+            (current.input, current.cached, current.output),
+            (4.0, 0.4, 20.0)
+        );
+    }
+
+    #[test]
+    fn selects_terra_and_luna_rates_by_capture_date() {
+        let pricing = Pricing::default();
+        let old_terra = pricing
+            .rates_for("gpt-5.6-terra", at("2026-07-29T23:59:59Z"))
+            .unwrap();
+        let current_terra = pricing
+            .rates_for("gpt-5.6-terra", at("2026-07-30T00:00:00Z"))
+            .unwrap();
+        let old_luna = pricing
+            .rates_for("gpt-5.6-luna", at("2026-07-29T23:59:59Z"))
+            .unwrap();
+        let current_luna = pricing
+            .rates_for("gpt-5.6-luna", at("2026-07-30T00:00:00Z"))
+            .unwrap();
+        assert_eq!(
+            (old_terra.input, old_terra.cached, old_terra.output),
+            (2.5, 0.25, 15.0)
+        );
+        assert_eq!(
+            (
+                current_terra.input,
+                current_terra.cached,
+                current_terra.output
+            ),
+            (2.0, 0.2, 12.0)
+        );
+        assert_eq!(
+            (old_luna.input, old_luna.cached, old_luna.output),
+            (1.0, 0.1, 6.0)
+        );
+        assert_eq!(
+            (current_luna.input, current_luna.cached, current_luna.output),
+            (0.2, 0.02, 1.2)
+        );
+    }
+
+    #[test]
+    fn rejects_dates_before_a_models_first_price_period() {
+        let pricing = Pricing::default();
+        assert!(
+            pricing
+                .rates_for("gpt-5.6-luna", at("2026-07-08T23:59:59Z"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn resolves_dated_aliases_with_historical_rates() {
+        let pricing = Pricing::default();
+        let rates = pricing
+            .rates_for("gpt-5.6-2026-07-09", at("2026-07-10T00:00:00Z"))
+            .unwrap();
+        assert_eq!((rates.input, rates.cached, rates.output), (5.0, 0.5, 30.0));
+    }
+
+    #[test]
+    fn prices_gpt_6_models_from_their_release_dates() {
+        let pricing = Pricing::default();
+        assert!(
+            pricing
+                .rates_for("gpt-6-sol", at("2026-09-21T23:59:59Z"))
+                .is_none()
+        );
+        let sol = pricing
+            .rates_for("gpt-6-sol", at("2026-09-22T00:00:00Z"))
+            .unwrap();
+        let luna = pricing
+            .rates_for("gpt-6-luna", at("2026-09-22T00:00:00Z"))
+            .unwrap();
+        assert_eq!((sol.input, sol.cached, sol.output), (2.0, 0.2, 10.0));
+        assert_eq!((luna.input, luna.cached, luna.output), (0.1, 0.01, 0.5));
     }
 }

@@ -169,7 +169,7 @@ pub fn aggregate(
         if let Some(rates) = event
             .model
             .as_deref()
-            .and_then(|model| pricing.rates_for(model))
+            .and_then(|model| pricing.rates_for(model, event.captured_at))
         {
             let non_cached = event.input_tokens.saturating_sub(event.cached_input_tokens);
             row.input_cost += non_cached as f64 * rates.input / 1_000_000.0;
@@ -458,5 +458,33 @@ mod tests {
         assert_eq!(format_window_duration(300), "5h");
         assert_eq!(format_window_duration(10_080), "7d");
         assert_eq!(format_window_duration(90), "90min");
+    }
+
+    #[test]
+    fn aggregate_prices_each_event_at_its_capture_date() {
+        let events = [
+            UsageEvent {
+                captured_at: "2026-08-20T23:59:59Z".parse().unwrap(),
+                output_tokens: 1_000_000,
+                model: Some("gpt-5.6-sol".to_owned()),
+                ..UsageEvent::default()
+            },
+            UsageEvent {
+                captured_at: "2026-08-21T00:00:00Z".parse().unwrap(),
+                output_tokens: 1_000_000,
+                model: Some("gpt-5.6-sol".to_owned()),
+                ..UsageEvent::default()
+            },
+        ];
+        let rows = aggregate(
+            events.into_iter(),
+            PeriodGroup::All,
+            &[],
+            chrono_tz::UTC,
+            &Pricing::default(),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].output_cost, 50.0);
+        assert_eq!(rows[0].estimated_cost, 50.0);
     }
 }
