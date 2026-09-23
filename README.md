@@ -2,6 +2,8 @@
 
 A small, database-free Rust CLI that reads Codex `rollout-*.jsonl` files and
 reports token usage and estimated costs.
+The separate latency view reports end-to-end turn duration and time to first
+token (TTFT).
 
 ## Build
 
@@ -29,6 +31,9 @@ codex-usage-analyzer report --last total --format json
 # Latest captured usage snapshot
 codex-usage-analyzer status
 
+# Latency statistics for the last seven days, broken down by model
+codex-usage-analyzer latency --last 7d --by model
+
 # Estimated composition of input and cached-input context over seven days
 codex-usage-analyzer breakdown --last 7d
 
@@ -42,11 +47,17 @@ The default rollout directory is `~/.codex/sessions`. Override it with
 Supported report options include:
 
 - `--today`, `--last`, `--from`, and `--to`
-- `--group total|day|week|month` (default: `total`)
+- `--group all|day|week|month` (default: `all`)
 - `--by model|effort|directory|session`, with comma-separated dimensions such as `--by model,effort`
 - `--format table|json|csv`
 - `--timezone IANA_NAME`
 - `--output PATH`
+
+`latency` accepts the same range, grouping, format, timezone, and output options
+as `report`. It shows sample counts, averages, medians, and p95 values. Latency
+fields are emitted in milliseconds in JSON and CSV; the table uses
+human-readable durations. Older rollouts may not contain latency measurements,
+so missing values are excluded from the sample counts and aggregates.
 
 `breakdown` reads context items but does not store them. It allocates the exact
 reported input, cached-input, output, and reasoning-output totals across

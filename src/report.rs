@@ -10,7 +10,7 @@ use crate::pricing::Pricing;
 
 #[derive(Clone, Copy, Debug)]
 pub enum PeriodGroup {
-    Total,
+    All,
     Day,
     Week,
     Month,
@@ -57,7 +57,7 @@ pub fn aggregate(
     for event in events {
         let local = event.captured_at.with_timezone(&timezone);
         let period_key = match period {
-            PeriodGroup::Total => "Total".to_owned(),
+            PeriodGroup::All => "All".to_owned(),
             PeriodGroup::Day => local.format("%Y-%m-%d").to_string(),
             PeriodGroup::Week => {
                 let offset = match local.weekday() {
@@ -151,7 +151,7 @@ fn render_csv(rows: &[ReportRow]) -> Result<String> {
 }
 
 fn render_table(rows: &[ReportRow], include_group: bool) -> String {
-    let show_summary = rows.len() != 1 || rows[0].period != "Total" || include_group;
+    let show_summary = rows.len() != 1 || rows[0].period != "All" || include_group;
     let mut headers = vec!["Period".to_owned()];
     if include_group {
         headers.push("Group".to_owned());

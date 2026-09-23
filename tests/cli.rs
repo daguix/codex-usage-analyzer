@@ -18,9 +18,9 @@ fn report_matches_fixture_totals() {
         .expect("binary should run");
     assert!(output.status.success());
     let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(rows[0]["period"], "Total");
+    assert_eq!(rows[0]["period"], "All");
     assert_eq!(rows[0]["total_tokens"], 155);
-    assert_eq!(rows[1]["period"], "Total");
+    assert_eq!(rows[1]["period"], "All");
     assert_eq!(rows[1]["total_tokens"], 310);
 }
 
@@ -34,7 +34,7 @@ fn report_can_aggregate_the_entire_range() {
             "--last",
             "total",
             "--group",
-            "total",
+            "all",
             "--format",
             "json",
         ])
@@ -43,8 +43,9 @@ fn report_can_aggregate_the_entire_range() {
     assert!(output.status.success());
     let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(rows.as_array().unwrap().len(), 1);
-    assert_eq!(rows[0]["period"], "Total");
+    assert_eq!(rows[0]["period"], "All");
     assert_eq!(rows[0]["total_tokens"], 465);
+    assert!(rows[0].get("duration_samples").is_none());
 
     let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
         .args([
@@ -54,18 +55,69 @@ fn report_can_aggregate_the_entire_range() {
             "--last",
             "total",
             "--group",
-            "total",
+            "all",
         ])
         .output()
         .expect("binary should run");
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
     assert_eq!(
-        text.lines()
-            .filter(|line| line.starts_with("Total "))
-            .count(),
+        text.lines().filter(|line| line.starts_with("All ")).count(),
         1
     );
+}
+
+#[test]
+fn latency_view_groups_by_model() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "latency",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "total",
+            "--by",
+            "model",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(output.status.success());
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows[0]["group"], "gpt-5.2-codex");
+    assert_eq!(rows[0]["average_duration_ms"], 5000.0);
+    assert_eq!(rows[0]["average_ttft_ms"], 1000.0);
+    assert_eq!(rows[1]["group"], "gpt-5.6-luna");
+    assert_eq!(rows[1]["average_duration_ms"], 15000.0);
+    assert_eq!(rows[1]["average_ttft_ms"], 3000.0);
+}
+
+#[test]
+fn latency_view_aggregates_the_entire_range() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "latency",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "total",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(output.status.success());
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows[0]["period"], "All");
+    assert_eq!(rows[0]["duration_samples"], 2);
+    assert_eq!(rows[0]["average_duration_ms"], 10000.0);
+    assert_eq!(rows[0]["p50_duration_ms"], 5000);
+    assert_eq!(rows[0]["p95_duration_ms"], 15000);
+    assert_eq!(rows[0]["ttft_samples"], 2);
+    assert_eq!(rows[0]["average_ttft_ms"], 2000.0);
+    assert_eq!(rows[0]["p50_ttft_ms"], 1000);
+    assert_eq!(rows[0]["p95_ttft_ms"], 3000);
 }
 
 #[test]

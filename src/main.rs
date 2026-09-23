@@ -1,6 +1,7 @@
 mod breakdown;
 mod cli;
 mod ingest;
+mod latency;
 mod pricing;
 mod report;
 

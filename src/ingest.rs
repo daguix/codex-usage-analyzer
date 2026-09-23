@@ -28,6 +28,18 @@ pub struct UsageEvent {
     pub codex_version: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct LatencyEvent {
+    pub captured_at: DateTime<Utc>,
+    pub duration_ms: Option<u64>,
+    pub time_to_first_token_ms: Option<u64>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub directory: Option<String>,
+    pub session_id: Option<String>,
+    pub turn_id: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RateLimitWindow {
     pub percent_left: f64,
@@ -38,6 +50,7 @@ pub struct RateLimitWindow {
 #[derive(Debug, Default)]
 pub struct ScanResult {
     pub events: Vec<UsageEvent>,
+    pub latencies: Vec<LatencyEvent>,
     pub files: usize,
     pub invalid_lines: usize,
 }
@@ -45,6 +58,7 @@ pub struct ScanResult {
 #[derive(Debug, Default)]
 struct FileResult {
     events: Vec<UsageEvent>,
+    latencies: Vec<LatencyEvent>,
     invalid_lines: usize,
 }
 
@@ -82,6 +96,7 @@ pub fn scan_rollouts(root: &Path) -> Result<ScanResult> {
         let file = file?;
         result.invalid_lines += file.invalid_lines;
         result.events.extend(file.events);
+        result.latencies.extend(file.latencies);
     }
     Ok(result)
 }
@@ -105,7 +120,12 @@ fn scan_file(path: &Path) -> Result<FileResult> {
                 continue;
             }
         };
-        parse_value(&value, &mut context, &mut result.events);
+        parse_value(
+            &value,
+            &mut context,
+            &mut result.events,
+            &mut result.latencies,
+        );
     }
     let mut seen = HashSet::new();
     result.events.retain(|event| {
@@ -119,10 +139,25 @@ fn scan_file(path: &Path) -> Result<FileResult> {
             event.session_id.clone(),
         ))
     });
+    let mut seen_latencies = HashSet::new();
+    result.latencies.retain(|event| {
+        seen_latencies.insert((
+            event.captured_at,
+            event.duration_ms,
+            event.time_to_first_token_ms,
+            event.session_id.clone(),
+            event.turn_id.clone(),
+        ))
+    });
     Ok(result)
 }
 
-fn parse_value(value: &Value, context: &mut Context, events: &mut Vec<UsageEvent>) {
+fn parse_value(
+    value: &Value,
+    context: &mut Context,
+    events: &mut Vec<UsageEvent>,
+    latencies: &mut Vec<LatencyEvent>,
+) {
     let Some(item_type) = value.get("type").and_then(Value::as_str) else {
         return;
     };
@@ -173,6 +208,38 @@ fn parse_value(value: &Value, context: &mut Context, events: &mut Vec<UsageEvent
                 directory: context.directory.clone(),
                 session_id: context.session_id.clone(),
                 codex_version: context.codex_version.clone(),
+            });
+        }
+        "event_msg" if payload.get("type").and_then(Value::as_str) == Some("task_complete") => {
+            let duration_ms = optional_number(payload, "duration_ms");
+            let time_to_first_token_ms = optional_number(payload, "time_to_first_token_ms");
+            if duration_ms.is_none() && time_to_first_token_ms.is_none() {
+                return;
+            }
+            let captured_at = value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .and_then(parse_timestamp)
+                .or_else(|| {
+                    optional_number(payload, "completed_at")
+                        .and_then(|value| i64::try_from(value).ok())
+                        .and_then(|value| DateTime::from_timestamp(value, 0))
+                });
+            let Some(captured_at) = captured_at else {
+                return;
+            };
+            latencies.push(LatencyEvent {
+                captured_at,
+                duration_ms,
+                time_to_first_token_ms,
+                model: context.model.clone(),
+                effort: context.effort.clone(),
+                directory: context.directory.clone(),
+                session_id: context.session_id.clone(),
+                turn_id: payload
+                    .get("turn_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
             });
         }
         _ => {}
@@ -232,15 +299,18 @@ mod tests {
     fn parses_nested_token_payload_and_context() {
         let mut context = Context::default();
         let mut events = Vec::new();
+        let mut latencies = Vec::new();
         parse_value(
             &serde_json::json!({"type":"session_meta","payload":{"id":"s","cwd":"/tmp/p"}}),
             &mut context,
             &mut events,
+            &mut latencies,
         );
         parse_value(
             &serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5.2","effort":"high"}}),
             &mut context,
             &mut events,
+            &mut latencies,
         );
         parse_value(
             &serde_json::json!({
@@ -252,10 +322,43 @@ mod tests {
             }),
             &mut context,
             &mut events,
+            &mut latencies,
         );
         assert_eq!(events[0].total_tokens, 16);
         assert_eq!(events[0].model.as_deref(), Some("gpt-5.2"));
         assert_eq!(events[0].effort.as_deref(), Some("high"));
         assert_eq!(events[0].session_id.as_deref(), Some("s"));
+    }
+
+    #[test]
+    fn parses_task_latency_and_context() {
+        let mut context = Context {
+            model: Some("gpt-5.2".to_owned()),
+            effort: Some("high".to_owned()),
+            directory: Some("/tmp/p".to_owned()),
+            session_id: Some("s".to_owned()),
+            codex_version: None,
+        };
+        let mut events = Vec::new();
+        let mut latencies = Vec::new();
+        parse_value(
+            &serde_json::json!({
+                "timestamp":"2026-09-22T10:00:05Z",
+                "type":"event_msg",
+                "payload":{
+                    "type":"task_complete",
+                    "turn_id":"t",
+                    "duration_ms":5000,
+                    "time_to_first_token_ms":1200
+                }
+            }),
+            &mut context,
+            &mut events,
+            &mut latencies,
+        );
+        assert_eq!(latencies[0].duration_ms, Some(5000));
+        assert_eq!(latencies[0].time_to_first_token_ms, Some(1200));
+        assert_eq!(latencies[0].model.as_deref(), Some("gpt-5.2"));
+        assert_eq!(latencies[0].turn_id.as_deref(), Some("t"));
     }
 }
