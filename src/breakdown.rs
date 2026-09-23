@@ -331,7 +331,11 @@ struct CategoryTotals {
     code_output: u64,
 }
 
-pub fn analyze(root: &Path, since: DateTime<Utc>) -> Result<Breakdown> {
+pub fn analyze(
+    root: &Path,
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+) -> Result<Breakdown> {
     if !root.exists() {
         return Ok(Breakdown::default());
     }
@@ -348,7 +352,7 @@ pub fn analyze(root: &Path, since: DateTime<Utc>) -> Result<Breakdown> {
         .collect();
     let parsed: Vec<Result<FileBreakdown>> = files
         .par_iter()
-        .map(|path| analyze_file(path, since))
+        .map(|path| analyze_file(path, start, end))
         .collect();
     let mut result = Breakdown {
         files: files.len(),
@@ -416,7 +420,11 @@ pub fn analyze(root: &Path, since: DateTime<Utc>) -> Result<Breakdown> {
     Ok(result)
 }
 
-fn analyze_file(path: &Path, since: DateTime<Utc>) -> Result<FileBreakdown> {
+fn analyze_file(
+    path: &Path,
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+) -> Result<FileBreakdown> {
     let mut result = FileBreakdown::default();
     let mut context = Vec::<Item>::new();
     let mut pending = Vec::<Item>::new();
@@ -461,7 +469,10 @@ fn analyze_file(path: &Path, since: DateTime<Utc>) -> Result<FileBreakdown> {
                     .and_then(Value::as_str)
                     .and_then(parse_timestamp);
                 let usage = payload.get("usage").unwrap_or(&Value::Null);
-                if timestamp.is_some_and(|timestamp| timestamp >= since) {
+                if timestamp.is_some_and(|timestamp| {
+                    start.is_none_or(|start| timestamp >= start)
+                        && end.is_none_or(|end| timestamp <= end)
+                }) {
                     let input = number(usage, "input_tokens");
                     let cached = number(usage, "cached_input_tokens").min(input);
                     let output = number(usage, "output_tokens");
@@ -490,9 +501,6 @@ fn analyze_file(path: &Path, since: DateTime<Utc>) -> Result<FileBreakdown> {
                 materialize_reasoning(&mut pending, number(usage, "reasoning_output_tokens"));
                 append_compact(&mut context, pending.drain(..));
             }
-            // Older rollout formats only have event_msg/token_count. Prefer
-            // token_usage_record when present because it has one record per
-            // model response and avoids cumulative snapshots.
             "event_msg"
                 if !has_usage_records
                     && payload.get("type").and_then(Value::as_str) == Some("token_count") =>
@@ -509,7 +517,10 @@ fn analyze_file(path: &Path, since: DateTime<Utc>) -> Result<FileBreakdown> {
                     .get("info")
                     .and_then(|info| info.get("last_token_usage"))
                     .unwrap_or(&Value::Null);
-                if timestamp.is_some_and(|timestamp| timestamp >= since) {
+                if timestamp.is_some_and(|timestamp| {
+                    start.is_none_or(|start| timestamp >= start)
+                        && end.is_none_or(|end| timestamp <= end)
+                }) {
                     let input = number(usage, "input_tokens");
                     let cached = number(usage, "cached_input_tokens").min(input);
                     let output = number(usage, "output_tokens");
@@ -723,9 +734,6 @@ fn attribute(
             .iter()
             .rposition(|item| item.category == Category::CompactionSummary)
         {
-            // Tool schemas and protocol framing are not written to rollouts.
-            // Keep the pre-compaction baseline separate instead of charging
-            // all opaque tokens to the encrypted summary.
             let overhead = protocol_overhead_hint.unwrap_or(0).min(extra);
             extra -= overhead;
             sized[index].tokens += extra;

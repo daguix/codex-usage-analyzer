@@ -18,14 +18,20 @@ pub struct UsageEvent {
     pub cached_input_tokens: u64,
     pub output_tokens: u64,
     pub reasoning_output_tokens: u64,
-    pub lifetime_total_tokens: Option<u64>,
-    pub context_total: Option<u64>,
-    pub limit_5h_percent_left: Option<f64>,
-    pub limit_weekly_percent_left: Option<f64>,
+    pub context_window: Option<u64>,
+    pub primary_limit: Option<RateLimitWindow>,
+    pub secondary_limit: Option<RateLimitWindow>,
     pub model: Option<String>,
     pub directory: Option<String>,
     pub session_id: Option<String>,
     pub codex_version: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RateLimitWindow {
+    pub percent_left: f64,
+    pub window_minutes: Option<u64>,
+    pub resets_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Default)]
@@ -99,9 +105,6 @@ fn scan_file(path: &Path) -> Result<FileResult> {
         };
         parse_value(&value, &mut context, &mut result.events);
     }
-    // The Python implementation's SQLite unique index suppresses identical
-    // token events from the same rollout source. Preserve that behavior in
-    // memory so reports remain compatible without a database.
     let mut seen = HashSet::new();
     result.events.retain(|event| {
         seen.insert((
@@ -146,7 +149,6 @@ fn parse_value(value: &Value, context: &mut Context, events: &mut Vec<UsageEvent
             };
             let info = event_payload.get("info").unwrap_or(&Value::Null);
             let last = info.get("last_token_usage").unwrap_or(&Value::Null);
-            let total = info.get("total_token_usage").unwrap_or(&Value::Null);
             let limits = event_payload.get("rate_limits").unwrap_or(&Value::Null);
             events.push(UsageEvent {
                 captured_at: timestamp,
@@ -155,10 +157,9 @@ fn parse_value(value: &Value, context: &mut Context, events: &mut Vec<UsageEvent
                 cached_input_tokens: number(last, "cached_input_tokens"),
                 output_tokens: number(last, "output_tokens"),
                 reasoning_output_tokens: number(last, "reasoning_output_tokens"),
-                lifetime_total_tokens: optional_number(total, "total_tokens"),
-                context_total: optional_number(info, "model_context_window"),
-                limit_5h_percent_left: percent_left(limits.get("primary")),
-                limit_weekly_percent_left: percent_left(limits.get("secondary")),
+                context_window: optional_number(info, "model_context_window"),
+                primary_limit: rate_limit_window(limits.get("primary")),
+                secondary_limit: rate_limit_window(limits.get("secondary")),
                 model: context.model.clone(),
                 directory: context.directory.clone(),
                 session_id: context.session_id.clone(),
@@ -201,6 +202,17 @@ fn percent_left(value: Option<&Value>) -> Option<f64> {
         .get("used_percent")?
         .as_f64()
         .map(|used| (100.0 - used).clamp(0.0, 100.0))
+}
+
+fn rate_limit_window(value: Option<&Value>) -> Option<RateLimitWindow> {
+    let value = value?;
+    Some(RateLimitWindow {
+        percent_left: percent_left(Some(value))?,
+        window_minutes: optional_number(value, "window_minutes"),
+        resets_at: optional_number(value, "resets_at")
+            .and_then(|value| i64::try_from(value).ok())
+            .and_then(|value| DateTime::from_timestamp(value, 0)),
+    })
 }
 
 #[cfg(test)]

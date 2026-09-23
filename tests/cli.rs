@@ -41,13 +41,33 @@ fn csv_has_one_header() {
 }
 
 #[test]
-fn breakdown_requires_days_and_emits_json() {
+fn status_shows_reasoning_output_tokens() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "status",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--timezone",
+            "UTC",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Token usage: total=310 input=240 cached=40 output=60 reasoning=10"));
+    assert!(text.contains("Context window: 99% left (310 used / 22,000)"));
+    assert!(text.contains("5h limit: 75% left (resets 2026-09-21T14:13:20+00:00)"));
+    assert!(text.contains("7d limit: 85% left (resets 2026-09-21T14:13:20+00:00)"));
+}
+
+#[test]
+fn breakdown_last_emits_json() {
     let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
         .args([
             "breakdown",
             "--rollouts",
             "tests/fixtures/rollouts",
-            "--since",
+            "--last",
             "99999d",
             "--format",
             "json",
@@ -73,7 +93,7 @@ fn breakdown_requires_days_and_emits_json() {
 }
 
 #[test]
-fn breakdown_without_since_analyzes_everything() {
+fn breakdown_without_range_analyzes_everything() {
     let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
         .args([
             "breakdown",
@@ -95,13 +115,24 @@ fn breakdown_without_since_analyzes_everything() {
 }
 
 #[test]
-fn breakdown_rejects_non_day_ranges() {
+fn breakdown_applies_start_and_end() {
     let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
-        .args(["breakdown", "--since", "12h"])
+        .args([
+            "breakdown",
+            "--rollouts",
+            "tests/fixtures/breakdown",
+            "--from",
+            "2026-09-22T10:00:02Z",
+            "--to",
+            "2026-09-22T10:00:05Z",
+            "--format",
+            "json",
+        ])
         .output()
         .expect("binary should run");
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("expected a positive number of days"));
+    assert!(output.status.success());
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["calls"], 2);
 }
 
 #[test]

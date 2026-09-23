@@ -27,7 +27,7 @@ codex-usage-analyzer report --last total --format json
 codex-usage-analyzer status
 
 # Estimated composition of input and cached-input context over seven days
-codex-usage-analyzer breakdown --since 7d
+codex-usage-analyzer breakdown --last 7d
 
 # All available rollouts
 codex-usage-analyzer breakdown
@@ -52,7 +52,8 @@ compaction summaries, model-injected tool schemas, and protocol overhead make
 the category split an estimate.
 `reasoning_output_tokens` is shown separately; depending on the rollout schema,
 it may be a subset of `output_tokens` rather than an additional token count.
-Without `--since`, every available rollout is analyzed.
+Without a range option, every available rollout is analyzed. `breakdown` accepts
+the same `--last`, `--today`, `--from`, and `--to` options as reports.
 Use `--format table|json|csv` and `--output PATH` as with reports. Code-looking
 output from file-reading/search commands is classified as repository source.
 The table groups results hierarchically by family, content kind, and source;

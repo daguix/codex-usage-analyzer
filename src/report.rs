@@ -5,7 +5,7 @@ use chrono::{Datelike, Weekday};
 use chrono_tz::Tz;
 use serde::Serialize;
 
-use crate::ingest::UsageEvent;
+use crate::ingest::{RateLimitWindow, UsageEvent};
 use crate::pricing::Pricing;
 
 #[derive(Clone, Copy, Debug)]
@@ -258,13 +258,15 @@ pub fn render_status(event: &UsageEvent, timezone: Tz) {
         println!("Codex version: {version}");
     }
     println!(
-        "Token usage: total={} input={} cached={} output={}",
+        "Token usage: total={} input={} cached={} output={} reasoning={}",
         format_integer(event.total_tokens),
         format_integer(event.input_tokens),
         format_integer(event.cached_input_tokens),
         format_integer(event.output_tokens),
+        format_integer(event.reasoning_output_tokens),
     );
-    if let (Some(used), Some(total)) = (event.lifetime_total_tokens, event.context_total) {
+    if let Some(total) = event.context_window.filter(|total| *total > 0) {
+        let used = event.total_tokens;
         let used_percent = used
             .saturating_mul(100)
             .checked_div(total)
@@ -276,11 +278,39 @@ pub fn render_status(event: &UsageEvent, timezone: Tz) {
             format_integer(total)
         );
     }
-    if let Some(left) = event.limit_5h_percent_left {
-        println!("5h limit: {left}% left");
+    if let Some(limit) = &event.primary_limit {
+        render_rate_limit(limit, "Primary", timezone);
     }
-    if let Some(left) = event.limit_weekly_percent_left {
-        println!("Weekly limit: {left}% left");
+    if let Some(limit) = &event.secondary_limit {
+        render_rate_limit(limit, "Secondary", timezone);
+    }
+}
+
+fn render_rate_limit(limit: &RateLimitWindow, fallback: &str, timezone: Tz) {
+    let label = limit
+        .window_minutes
+        .map(format_window_duration)
+        .unwrap_or_else(|| fallback.to_owned());
+    if let Some(resets_at) = limit.resets_at {
+        println!(
+            "{label} limit: {}% left (resets {})",
+            limit.percent_left,
+            resets_at
+                .with_timezone(&timezone)
+                .format("%Y-%m-%dT%H:%M:%S%:z")
+        );
+    } else {
+        println!("{label} limit: {}% left", limit.percent_left);
+    }
+}
+
+fn format_window_duration(minutes: u64) -> String {
+    if minutes > 0 && minutes.is_multiple_of(1_440) {
+        format!("{}d", minutes / 1_440)
+    } else if minutes > 0 && minutes.is_multiple_of(60) {
+        format!("{}h", minutes / 60)
+    } else {
+        format!("{minutes}min")
     }
 }
 
@@ -291,5 +321,12 @@ mod tests {
     #[test]
     fn integer_format_matches_python_style() {
         assert_eq!(format_integer(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn rate_limit_windows_use_their_actual_duration() {
+        assert_eq!(format_window_duration(300), "5h");
+        assert_eq!(format_window_duration(10_080), "7d");
+        assert_eq!(format_window_duration(90), "90min");
     }
 }

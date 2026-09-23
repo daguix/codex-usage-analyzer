@@ -29,37 +29,47 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Aggregate token usage and estimated costs.
+    #[command(about = "Aggregate token usage and estimated costs")]
     Report(ReportArgs),
-    /// Show the latest token usage snapshot.
+    #[command(about = "Show the latest token usage snapshot")]
     Status(StatusArgs),
-    /// Estimate which kinds of content make up model input and cached input.
+    #[command(about = "Estimate which kinds of content make up model input and cached input")]
     Breakdown(BreakdownArgs),
 }
 
 #[derive(Clone, Debug, Args)]
 struct SourceArgs {
-    /// Directory containing rollout-*.jsonl files.
-    #[arg(long, env = "CODEX_USAGE_ROLLOUTS")]
+    #[arg(
+        long,
+        env = "CODEX_USAGE_ROLLOUTS",
+        help = "Directory containing rollout-*.jsonl files"
+    )]
     rollouts: Option<PathBuf>,
-    /// IANA timezone used for ranges and grouping.
-    #[arg(long, default_value = DEFAULT_TIMEZONE)]
+    #[arg(
+        long,
+        default_value = DEFAULT_TIMEZONE,
+        help = "IANA timezone used for ranges and grouping"
+    )]
     timezone: String,
 }
 
 #[derive(Clone, Debug, Args)]
 struct RangeArgs {
-    /// Relative range such as 7d, 12h, 1m, 30min, or total.
-    #[arg(long, conflicts_with_all = ["today", "from", "to"])]
+    #[arg(
+        long,
+        conflicts_with_all = ["today", "from", "to"],
+        help = "Relative range such as 7d, 12h, 1m, 30min, or total"
+    )]
     last: Option<String>,
-    /// Analyze local midnight through now.
-    #[arg(long, conflicts_with_all = ["last", "from", "to"])]
+    #[arg(
+        long,
+        conflicts_with_all = ["last", "from", "to"],
+        help = "Analyze local midnight through now"
+    )]
     today: bool,
-    /// Range start (YYYY-MM-DD or ISO-8601).
-    #[arg(long)]
+    #[arg(long, help = "Range start (YYYY-MM-DD or ISO-8601)")]
     from: Option<String>,
-    /// Range end (YYYY-MM-DD or ISO-8601).
-    #[arg(long)]
+    #[arg(long, help = "Range end (YYYY-MM-DD or ISO-8601)")]
     to: Option<String>,
 }
 
@@ -69,17 +79,23 @@ struct ReportArgs {
     source: SourceArgs,
     #[command(flatten)]
     range: RangeArgs,
-    /// Period used to aggregate rows.
-    #[arg(long, value_enum, default_value_t = PeriodArg::Day)]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = PeriodArg::Day,
+        help = "Period used to aggregate rows"
+    )]
     group: PeriodArg,
-    /// Optional secondary grouping.
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "Optional secondary grouping")]
     by: Option<GroupArg>,
-    /// Output format.
-    #[arg(long, value_enum, default_value_t = FormatArg::Table)]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = FormatArg::Table,
+        help = "Output format"
+    )]
     format: FormatArg,
-    /// Write output to a file instead of stdout.
-    #[arg(long, short = 'o')]
+    #[arg(long, short = 'o', help = "Write output to a file instead of stdout")]
     output: Option<PathBuf>,
 }
 
@@ -93,14 +109,16 @@ struct StatusArgs {
 struct BreakdownArgs {
     #[command(flatten)]
     source: SourceArgs,
-    /// Analyze only model calls from the last N days (for example: 7d).
-    #[arg(long)]
-    since: Option<String>,
-    /// Output format.
-    #[arg(long, value_enum, default_value_t = FormatArg::Table)]
+    #[command(flatten)]
+    range: RangeArgs,
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = FormatArg::Table,
+        help = "Output format"
+    )]
     format: FormatArg,
-    /// Write output to a file instead of stdout.
-    #[arg(long, short = 'o')]
+    #[arg(long, short = 'o', help = "Write output to a file instead of stdout")]
     output: Option<PathBuf>,
 }
 
@@ -135,22 +153,14 @@ pub fn run(cli: Cli) -> Result<()> {
 }
 
 fn run_breakdown(args: BreakdownArgs) -> Result<()> {
-    // Validate the timezone for consistency with the other commands, although
-    // this relative range is an elapsed duration and therefore UTC-based.
-    parse_timezone(&args.source.timezone)?;
-    let since = args
-        .since
-        .as_deref()
-        .map(parse_since_days)
-        .transpose()?
-        .map(|days| Utc::now() - chrono::Duration::days(days))
-        .unwrap_or(DateTime::<Utc>::MIN_UTC);
+    let timezone = parse_timezone(&args.source.timezone)?;
+    let (start, end) = resolve_range(&args.range, timezone)?;
     let root = args
         .source
         .rollouts
         .clone()
         .unwrap_or_else(default_rollouts_dir);
-    let result = breakdown::analyze(&root, since)
+    let result = breakdown::analyze(&root, start, end)
         .with_context(|| format!("failed to scan {}", root.display()))?;
     if result.invalid_lines > 0 {
         eprintln!(
@@ -170,18 +180,6 @@ fn run_breakdown(args: BreakdownArgs) -> Result<()> {
         println!("{output}");
     }
     Ok(())
-}
-
-fn parse_since_days(value: &str) -> Result<i64> {
-    let normalized = value.trim().to_ascii_lowercase();
-    let Some(number) = normalized.strip_suffix('d') else {
-        bail!("invalid --since value; expected a positive number of days such as 7d");
-    };
-    let days: i64 = number.parse().context("invalid --since day count")?;
-    if days <= 0 {
-        bail!("invalid --since value; day count must be positive");
-    }
-    Ok(days)
 }
 
 fn render_breakdown_table(result: &breakdown::Breakdown) -> String {
