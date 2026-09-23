@@ -175,7 +175,7 @@ fn render_table(rows: &[LatencyRow], include_group: bool) -> String {
 
 fn summarize(rows: &[LatencyRow]) -> LatencyRow {
     let mut total = LatencyRow {
-        period: "All".to_owned(),
+        period: "Total".to_owned(),
         ..LatencyRow::default()
     };
     for row in rows {
