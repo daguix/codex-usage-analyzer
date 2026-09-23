@@ -1,0 +1,9 @@
+{"timestamp":"2026-09-22T10:00:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Please update the implementation."}]}}
+{"timestamp":"2026-09-22T10:00:01.000Z","type":"response_item","payload":{"type":"function_call","name":"apply_patch","arguments":"{\"patch\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old();\\n+new();\\n*** End Patch\"}","call_id":"patch-1"}}
+{"timestamp":"2026-09-22T10:00:02.000Z","type":"token_usage_record","payload":{"usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":40,"reasoning_output_tokens":0,"total_tokens":140}}}
+{"timestamp":"2026-09-22T10:00:03.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"patch-1","output":"Done!"}}
+{"timestamp":"2026-09-22T10:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"exec","arguments":"tools.exec_command({\"cmd\":\"rg -n fn src/main.rs\"})","call_id":"search-1"}}
+{"timestamp":"2026-09-22T10:00:05.000Z","type":"token_usage_record","payload":{"usage":{"input_tokens":140,"cached_input_tokens":30,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":160}}}
+{"timestamp":"2026-09-22T10:00:06.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"search-1","output":"fn first() {}\nfn second() {}"}}
+{"timestamp":"2026-09-22T10:00:07.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Updated.\n```\nfn generated() {}\n```\n12 | let checked = true;"}]}}
+{"timestamp":"2026-09-22T10:00:08.000Z","type":"token_usage_record","payload":{"usage":{"input_tokens":180,"cached_input_tokens":60,"output_tokens":30,"reasoning_output_tokens":0,"total_tokens":210}}}

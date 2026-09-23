@@ -193,30 +193,151 @@ fn render_breakdown_table(result: &breakdown::Breakdown) -> String {
         format_count(result.output_tokens),
         format_count(result.reasoning_output_tokens),
     )];
-    lines.push(format!(
-        "{:<35} {:>12} {:>7} {:>12} {:>7} {:>12} {:>7} {:>12} {:>7}",
-        "Category", "Input", "In %", "Cached", "Cch %", "Output", "Out %", "Reasoning", "Rsn %",
-    ));
-    lines.push(format!(
-        "{:-<35} {:-<12} {:-<7} {:-<12} {:-<7} {:-<12} {:-<7} {:-<12} {:-<7}",
-        "", "", "", "", "", "", "", "", ""
-    ));
-    for row in &result.rows {
-        lines.push(format!(
-            "{:<35} {:>12} {:>6.1}% {:>12} {:>6.1}% {:>12} {:>6.1}% {:>12} {:>6.1}%",
-            row.category.label(),
-            format_count(row.estimated_input_tokens),
-            row.input_percent,
-            format_count(row.estimated_cached_input_tokens),
-            row.cached_percent,
-            format_count(row.estimated_output_tokens),
-            row.output_percent,
-            format_count(row.reasoning_output_tokens),
-            row.reasoning_percent,
-        ));
+    let headers = [
+        "Category",
+        "Input",
+        "Input %",
+        "Code input",
+        "Cached",
+        "Cached code",
+        "Output",
+        "Code output",
+        "Reasoning",
+    ];
+    let values: Vec<[String; 9]> = breakdown_tree_rows(result)
+        .into_iter()
+        .map(|row| {
+            [
+                row.label,
+                format_count(row.metrics.input),
+                format!("{:.1}%", percent(row.metrics.input, result.input_tokens)),
+                format_count(row.metrics.code_input),
+                format_count(row.metrics.cached_input),
+                format_count(row.metrics.cached_code_input),
+                format_count(row.metrics.output),
+                format_count(row.metrics.code_output),
+                format_count(row.metrics.reasoning_output),
+            ]
+        })
+        .collect();
+    let mut widths = headers.map(str::len);
+    for row in &values {
+        for (index, value) in row.iter().enumerate() {
+            widths[index] = widths[index].max(value.len());
+        }
     }
+    lines.push(format_breakdown_row(&headers, &widths));
+    let separators = widths.map(|width| "-".repeat(width));
+    lines.push(separators.join("  "));
+    lines.extend(values.iter().map(|row| format_breakdown_row(row, &widths)));
+    lines.push(format!(
+        "\nDetected source code totals: input {}, cached {}, output {}",
+        format_count(result.estimated_code_input_tokens),
+        format_count(result.estimated_cached_code_input_tokens),
+        format_count(result.estimated_code_output_tokens),
+    ));
     lines.push("\nEstimate: reported token totals allocated from recorded context order; encrypted summaries and protocol/tool-schema overhead are inferred.".to_owned());
     lines.join("\n")
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BreakdownMetrics {
+    input: u64,
+    cached_input: u64,
+    output: u64,
+    reasoning_output: u64,
+    code_input: u64,
+    cached_code_input: u64,
+    code_output: u64,
+}
+
+impl BreakdownMetrics {
+    fn add_row(&mut self, row: &breakdown::BreakdownRow) {
+        self.input += row.estimated_input_tokens;
+        self.cached_input += row.estimated_cached_input_tokens;
+        self.output += row.estimated_output_tokens;
+        self.reasoning_output += row.reasoning_output_tokens;
+        self.code_input += row.estimated_code_input_tokens;
+        self.cached_code_input += row.estimated_cached_code_input_tokens;
+        self.code_output += row.estimated_code_output_tokens;
+    }
+}
+
+#[derive(Debug)]
+struct BreakdownTreeRow {
+    label: String,
+    metrics: BreakdownMetrics,
+}
+
+fn breakdown_tree_rows(result: &breakdown::Breakdown) -> Vec<BreakdownTreeRow> {
+    use std::collections::BTreeMap;
+
+    let mut families = BTreeMap::<breakdown::Family, BreakdownMetrics>::new();
+    let mut kinds = BTreeMap::<(breakdown::Family, breakdown::Kind), BreakdownMetrics>::new();
+    for row in &result.rows {
+        families
+            .entry(row.category.family)
+            .or_default()
+            .add_row(row);
+        if let Some(kind) = row.category.kind {
+            kinds
+                .entry((row.category.family, kind))
+                .or_default()
+                .add_row(row);
+        }
+    }
+
+    let mut tree = Vec::new();
+    for (family, metrics) in families {
+        tree.push(BreakdownTreeRow {
+            label: family.label().to_owned(),
+            metrics,
+        });
+        for ((_, kind), metrics) in kinds
+            .iter()
+            .filter(|((kind_family, _), _)| *kind_family == family)
+        {
+            tree.push(BreakdownTreeRow {
+                label: format!("  {}", kind.label()),
+                metrics: *metrics,
+            });
+            for row in result.rows.iter().filter(|row| {
+                row.category.family == family
+                    && row.category.kind == Some(*kind)
+                    && row.category.source.is_some()
+            }) {
+                tree.push(BreakdownTreeRow {
+                    label: format!("    {}", row.category.leaf_label()),
+                    metrics: BreakdownMetrics {
+                        input: row.estimated_input_tokens,
+                        cached_input: row.estimated_cached_input_tokens,
+                        output: row.estimated_output_tokens,
+                        reasoning_output: row.reasoning_output_tokens,
+                        code_input: row.estimated_code_input_tokens,
+                        cached_code_input: row.estimated_cached_code_input_tokens,
+                        code_output: row.estimated_code_output_tokens,
+                    },
+                });
+            }
+        }
+    }
+    tree
+}
+
+fn format_breakdown_row<S: AsRef<str>>(values: &[S; 9], widths: &[usize; 9]) -> String {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let value = value.as_ref();
+            if index == 0 {
+                format!("{value:<width$}", width = widths[index])
+            } else {
+                format!("{value:>width$}", width = widths[index])
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 fn render_breakdown_csv(rows: &[breakdown::BreakdownRow]) -> Result<String> {
@@ -224,22 +345,65 @@ fn render_breakdown_csv(rows: &[breakdown::BreakdownRow]) -> Result<String> {
         .has_headers(false)
         .from_writer(Vec::new());
     writer.write_record([
-        "category",
+        "family",
+        "kind",
+        "source",
         "estimated_input_tokens",
         "estimated_cached_input_tokens",
         "estimated_output_tokens",
         "reasoning_output_tokens",
+        "estimated_code_input_tokens",
+        "estimated_cached_code_input_tokens",
+        "estimated_code_output_tokens",
         "input_percent",
         "cached_percent",
         "output_percent",
         "reasoning_percent",
     ])?;
     for row in rows {
-        writer.serialize(row)?;
+        writer.write_record([
+            serialized_enum(row.category.family)?,
+            row.category
+                .kind
+                .map(serialized_enum)
+                .transpose()?
+                .unwrap_or_default(),
+            row.category
+                .source
+                .map(serialized_enum)
+                .transpose()?
+                .unwrap_or_default(),
+            row.estimated_input_tokens.to_string(),
+            row.estimated_cached_input_tokens.to_string(),
+            row.estimated_output_tokens.to_string(),
+            row.reasoning_output_tokens.to_string(),
+            row.estimated_code_input_tokens.to_string(),
+            row.estimated_cached_code_input_tokens.to_string(),
+            row.estimated_code_output_tokens.to_string(),
+            row.input_percent.to_string(),
+            row.cached_percent.to_string(),
+            row.output_percent.to_string(),
+            row.reasoning_percent.to_string(),
+        ])?;
     }
     Ok(String::from_utf8(writer.into_inner()?)?
         .trim_end()
         .to_owned())
+}
+
+fn serialized_enum<T: serde::Serialize>(value: T) -> Result<String> {
+    serde_json::to_value(value)?
+        .as_str()
+        .map(str::to_owned)
+        .context("breakdown enum did not serialize as a string")
+}
+
+fn percent(value: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        value as f64 * 100.0 / total as f64
+    }
 }
 
 fn format_count(value: u64) -> String {
@@ -445,5 +609,34 @@ mod tests {
         let month = parse_last("1m", now, tz).unwrap().0.unwrap();
         assert_eq!((now - minute).num_minutes(), 30);
         assert!(month < now - chrono::Duration::days(28));
+    }
+
+    #[test]
+    fn breakdown_table_uses_dynamic_aligned_columns() {
+        let result = breakdown::Breakdown {
+            rows: vec![breakdown::BreakdownRow {
+                category: breakdown::Category::PatchEditEnvelope,
+                estimated_input_tokens: 1_234,
+                estimated_cached_input_tokens: 123,
+                estimated_output_tokens: 12,
+                reasoning_output_tokens: 0,
+                estimated_code_input_tokens: 0,
+                estimated_cached_code_input_tokens: 0,
+                estimated_code_output_tokens: 0,
+                input_percent: 12.3,
+                cached_percent: 4.5,
+                output_percent: 6.7,
+                reasoning_percent: 0.0,
+            }],
+            ..breakdown::Breakdown::default()
+        };
+        let table = render_breakdown_table(&result);
+        let lines: Vec<&str> = table.lines().collect();
+        let table_width = lines[1].chars().count();
+        assert_eq!(lines[2].chars().count(), table_width);
+        assert_eq!(lines[3].chars().count(), table_width);
+        assert_eq!(lines[4].chars().count(), table_width);
+        assert!(lines[3].starts_with("Tool calls"));
+        assert!(lines[4].starts_with("  Patch/edit envelope"));
     }
 }
