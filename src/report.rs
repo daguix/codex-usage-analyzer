@@ -10,6 +10,7 @@ use crate::pricing::Pricing;
 
 #[derive(Clone, Copy, Debug)]
 pub enum PeriodGroup {
+    Total,
     Day,
     Week,
     Month,
@@ -18,6 +19,7 @@ pub enum PeriodGroup {
 #[derive(Clone, Copy, Debug)]
 pub enum GroupBy {
     Model,
+    Effort,
     Directory,
     Session,
 }
@@ -47,7 +49,7 @@ pub struct ReportRow {
 pub fn aggregate(
     events: impl Iterator<Item = UsageEvent>,
     period: PeriodGroup,
-    by: Option<GroupBy>,
+    by: &[GroupBy],
     timezone: Tz,
     pricing: &Pricing,
 ) -> Vec<ReportRow> {
@@ -55,6 +57,7 @@ pub fn aggregate(
     for event in events {
         let local = event.captured_at.with_timezone(&timezone);
         let period_key = match period {
+            PeriodGroup::Total => "Total".to_owned(),
             PeriodGroup::Day => local.format("%Y-%m-%d").to_string(),
             PeriodGroup::Week => {
                 let offset = match local.weekday() {
@@ -72,14 +75,22 @@ pub fn aggregate(
             }
             PeriodGroup::Month => local.format("%Y-%m").to_string(),
         };
-        let group_key = match by {
-            Some(GroupBy::Model) => event.model.as_deref(),
-            Some(GroupBy::Directory) => event.directory.as_deref(),
-            Some(GroupBy::Session) => event.session_id.as_deref(),
-            None => Some("all"),
-        }
-        .unwrap_or("<unknown>")
-        .to_owned();
+        let group_key = if by.is_empty() {
+            "all".to_owned()
+        } else {
+            by.iter()
+                .map(|group| {
+                    match group {
+                        GroupBy::Model => event.model.as_deref(),
+                        GroupBy::Effort => event.effort.as_deref(),
+                        GroupBy::Directory => event.directory.as_deref(),
+                        GroupBy::Session => event.session_id.as_deref(),
+                    }
+                    .unwrap_or("<unknown>")
+                })
+                .collect::<Vec<_>>()
+                .join(" / ")
+        };
         let row = rows
             .entry((period_key.clone(), group_key.clone()))
             .or_insert_with(|| ReportRow {
@@ -140,6 +151,7 @@ fn render_csv(rows: &[ReportRow]) -> Result<String> {
 }
 
 fn render_table(rows: &[ReportRow], include_group: bool) -> String {
+    let show_summary = rows.len() != 1 || rows[0].period != "Total" || include_group;
     let mut headers = vec!["Period".to_owned()];
     if include_group {
         headers.push("Group".to_owned());
@@ -180,10 +192,12 @@ fn render_table(rows: &[ReportRow], include_group: bool) -> String {
     let separator: Vec<String> = widths.iter().map(|width| "-".repeat(*width)).collect();
     let mut lines = vec![format_row(&headers), format_row(&separator)];
     lines.extend(values.iter().map(|row| format_row(row)));
-    if !rows.is_empty() {
+    if !rows.is_empty() && show_summary {
         lines.push(format_row(&separator));
     }
-    lines.push(format_row(&total_values));
+    if show_summary {
+        lines.push(format_row(&total_values));
+    }
     lines.join("\n")
 }
 

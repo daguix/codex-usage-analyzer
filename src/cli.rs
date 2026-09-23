@@ -82,12 +82,17 @@ struct ReportArgs {
     #[arg(
         long,
         value_enum,
-        default_value_t = PeriodArg::Day,
+        default_value_t = PeriodArg::Total,
         help = "Period used to aggregate rows"
     )]
     group: PeriodArg,
-    #[arg(long, value_enum, help = "Optional secondary grouping")]
-    by: Option<GroupArg>,
+    #[arg(
+        long,
+        value_enum,
+        value_delimiter = ',',
+        help = "Optional secondary grouping dimensions"
+    )]
+    by: Vec<GroupArg>,
     #[arg(
         long,
         value_enum,
@@ -124,6 +129,7 @@ struct BreakdownArgs {
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum PeriodArg {
+    Total,
     Day,
     Week,
     Month,
@@ -132,6 +138,7 @@ enum PeriodArg {
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum GroupArg {
     Model,
+    Effort,
     Directory,
     Session,
 }
@@ -428,21 +435,27 @@ fn run_report(args: ReportArgs) -> Result<()> {
     let rows = report::aggregate(
         events,
         match args.group {
+            PeriodArg::Total => PeriodGroup::Total,
             PeriodArg::Day => PeriodGroup::Day,
             PeriodArg::Week => PeriodGroup::Week,
             PeriodArg::Month => PeriodGroup::Month,
         },
-        args.by.map(|value| match value {
-            GroupArg::Model => GroupBy::Model,
-            GroupArg::Directory => GroupBy::Directory,
-            GroupArg::Session => GroupBy::Session,
-        }),
+        &args
+            .by
+            .iter()
+            .map(|value| match value {
+                GroupArg::Model => GroupBy::Model,
+                GroupArg::Effort => GroupBy::Effort,
+                GroupArg::Directory => GroupBy::Directory,
+                GroupArg::Session => GroupBy::Session,
+            })
+            .collect::<Vec<_>>(),
         timezone,
         &Pricing::default(),
     );
     let output = report::render(
         &rows,
-        args.by.is_some(),
+        !args.by.is_empty(),
         match args.format {
             FormatArg::Table => ReportFormat::Table,
             FormatArg::Json => ReportFormat::Json,

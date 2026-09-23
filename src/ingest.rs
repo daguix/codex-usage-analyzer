@@ -22,6 +22,7 @@ pub struct UsageEvent {
     pub primary_limit: Option<RateLimitWindow>,
     pub secondary_limit: Option<RateLimitWindow>,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub directory: Option<String>,
     pub session_id: Option<String>,
     pub codex_version: Option<String>,
@@ -50,6 +51,7 @@ struct FileResult {
 #[derive(Clone, Debug, Default)]
 struct Context {
     model: Option<String>,
+    effort: Option<String>,
     directory: Option<String>,
     session_id: Option<String>,
     codex_version: Option<String>,
@@ -133,6 +135,12 @@ fn parse_value(value: &Value, context: &mut Context, events: &mut Vec<UsageEvent
         }
         "turn_context" => {
             replace_string(&mut context.model, payload.get("model"));
+            replace_string(
+                &mut context.effort,
+                payload
+                    .get("effort")
+                    .or_else(|| payload.get("reasoning_effort")),
+            );
             replace_string(&mut context.directory, payload.get("cwd"));
         }
         "event_msg" if payload.get("type").and_then(Value::as_str) == Some("token_count") => {
@@ -161,6 +169,7 @@ fn parse_value(value: &Value, context: &mut Context, events: &mut Vec<UsageEvent
                 primary_limit: rate_limit_window(limits.get("primary")),
                 secondary_limit: rate_limit_window(limits.get("secondary")),
                 model: context.model.clone(),
+                effort: context.effort.clone(),
                 directory: context.directory.clone(),
                 session_id: context.session_id.clone(),
                 codex_version: context.codex_version.clone(),
@@ -229,7 +238,7 @@ mod tests {
             &mut events,
         );
         parse_value(
-            &serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5.2"}}),
+            &serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5.2","effort":"high"}}),
             &mut context,
             &mut events,
         );
@@ -246,6 +255,7 @@ mod tests {
         );
         assert_eq!(events[0].total_tokens, 16);
         assert_eq!(events[0].model.as_deref(), Some("gpt-5.2"));
+        assert_eq!(events[0].effort.as_deref(), Some("high"));
         assert_eq!(events[0].session_id.as_deref(), Some("s"));
     }
 }

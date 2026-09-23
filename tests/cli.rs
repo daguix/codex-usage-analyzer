@@ -18,7 +18,101 @@ fn report_matches_fixture_totals() {
         .expect("binary should run");
     assert!(output.status.success());
     let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows[0]["period"], "Total");
     assert_eq!(rows[0]["total_tokens"], 155);
+    assert_eq!(rows[1]["period"], "Total");
+    assert_eq!(rows[1]["total_tokens"], 310);
+}
+
+#[test]
+fn report_can_aggregate_the_entire_range() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "report",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "total",
+            "--group",
+            "total",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(output.status.success());
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+    assert_eq!(rows[0]["period"], "Total");
+    assert_eq!(rows[0]["total_tokens"], 465);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "report",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "total",
+            "--group",
+            "total",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        text.lines()
+            .filter(|line| line.starts_with("Total "))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn report_groups_usage_by_effort() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "report",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "total",
+            "--by",
+            "effort",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(output.status.success());
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows[0]["group"], "high");
+    assert_eq!(rows[0]["total_tokens"], 155);
+    assert_eq!(rows[1]["group"], "medium");
+    assert_eq!(rows[1]["total_tokens"], 310);
+}
+
+#[test]
+fn report_groups_usage_by_model_and_effort() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "report",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "total",
+            "--by",
+            "model,effort",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(output.status.success());
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows[0]["group"], "gpt-5.2-codex / high");
+    assert_eq!(rows[0]["total_tokens"], 155);
+    assert_eq!(rows[1]["group"], "gpt-5.6-luna / medium");
     assert_eq!(rows[1]["total_tokens"], 310);
 }
 

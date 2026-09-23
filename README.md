@@ -20,6 +20,9 @@ codex-usage-analyzer --today
 # Last seven days, broken down by model
 codex-usage-analyzer --last 7d --by model
 
+# Last seven days, broken down by model and reasoning effort
+codex-usage-analyzer --last 7d --by model,effort
+
 # JSON for all available rollouts
 codex-usage-analyzer report --last total --format json
 
@@ -39,8 +42,8 @@ The default rollout directory is `~/.codex/sessions`. Override it with
 Supported report options include:
 
 - `--today`, `--last`, `--from`, and `--to`
-- `--group day|week|month`
-- `--by model|directory|session`
+- `--group total|day|week|month` (default: `total`)
+- `--by model|effort|directory|session`, with comma-separated dimensions such as `--by model,effort`
 - `--format table|json|csv`
 - `--timezone IANA_NAME`
 - `--output PATH`
