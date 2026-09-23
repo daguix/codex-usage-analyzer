@@ -15,6 +15,7 @@ or background service required. The optimized Linux x86-64 binary is about
 - Inspect end-to-end latency, time to first token (TTFT), medians, and p95
 - Analyze context composition and identify token-heavy tools and content
 - Export reports as human-readable tables, JSON, or CSV
+- Export versioned, structured JSON for telemetry ingestion
 - Keep session data local with no database, account, or background service
 
 ## Build
