@@ -13,6 +13,7 @@ or background service required. The optimized Linux x86-64 binary is about
 - Track Codex token usage and estimated API costs over custom time ranges
 - Group results by model, reasoning effort, directory, or session
 - Inspect end-to-end latency, time to first token (TTFT), medians, and p95
+- Measure agent-hours and effective parallelism from completed turns
 - Analyze context composition and identify token-heavy tools and content
 - Export reports as human-readable tables, JSON, or CSV
 - Export versioned, structured JSON for telemetry ingestion
@@ -58,6 +59,12 @@ codex-usage-analyzer status
 # Latency statistics for the last seven days, broken down by model
 codex-usage-analyzer latency --last 7d --by model
 
+# Agent-hours and effective parallelism over seven days
+codex-usage-analyzer workflow --last 7d
+
+# Daily results broken down by model
+codex-usage-analyzer workflow --last 7d --group day --by model
+
 # Estimated composition of input and cached-input context over seven days
 codex-usage-analyzer breakdown --last 7d
 
@@ -89,6 +96,16 @@ averages, medians, and p95 values. Latency
 fields are emitted in milliseconds in JSON and CSV; the table uses
 human-readable durations. Older rollouts may not contain latency measurements,
 so missing values are excluded from the sample counts and aggregates.
+
+`workflow` accepts the same range, `--group all|day|week|month`,
+`--by model|effort|directory|session`, timezone, and `--format table|json|csv`
+options as `latency`. The default grouping is `all`. Agent-hours sum the recorded
+durations of completed turns within each period and group. Active wall-hours
+measure the union of their time intervals, counting overlaps once within each
+group. Effective parallelism is agent-hours divided by active wall-hours.
+Intervals crossing a day or range boundary are split or clipped at that boundary.
+Turns without a recorded duration are excluded. These measures describe recorded
+agent activity, not verified human time saved.
 
 `breakdown` reads context items but does not store them. It allocates the exact
 reported input, cached-input, output, and reasoning-output totals across

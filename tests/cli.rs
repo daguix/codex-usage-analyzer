@@ -121,6 +121,66 @@ fn latency_view_aggregates_the_entire_range() {
 }
 
 #[test]
+fn workflow_defaults_to_all_periods() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "workflow",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "all",
+            "--timezone",
+            "UTC",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+    assert_eq!(rows[0]["period"], "All");
+    assert_eq!(rows[0]["group"], "all");
+    assert_eq!(rows[0]["agent_hours"], 20.0 / 3600.0);
+    assert_eq!(rows[0]["wall_clock_active_hours"], 20.0 / 3600.0);
+    assert_eq!(rows[0]["effective_parallelism"], 1.0);
+}
+
+#[test]
+fn workflow_groups_by_day_and_model() {
+    let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
+        .args([
+            "workflow",
+            "--rollouts",
+            "tests/fixtures/rollouts",
+            "--last",
+            "all",
+            "--timezone",
+            "UTC",
+            "--group",
+            "day",
+            "--by",
+            "model",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(output.status.success());
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 2);
+    assert_eq!(rows[0]["period"], "2026-09-22");
+    assert_eq!(rows[0]["group"], "gpt-5.2-codex");
+    assert_eq!(rows[0]["agent_hours"], 5.0 / 3600.0);
+    assert_eq!(rows[1]["group"], "gpt-5.6-luna");
+    assert_eq!(rows[1]["agent_hours"], 15.0 / 3600.0);
+}
+
+#[test]
 fn report_groups_usage_by_effort() {
     let output = Command::new(env!("CARGO_BIN_EXE_codex-usage-analyzer"))
         .args([

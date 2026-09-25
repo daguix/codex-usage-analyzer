@@ -10,6 +10,7 @@ use crate::ingest::{ScanResult, scan_rollouts};
 use crate::latency;
 use crate::pricing::Pricing;
 use crate::report::{self, GroupBy, PeriodGroup, ReportFormat};
+use crate::workflow;
 
 const DEFAULT_TIMEZONE: &str = "Europe/Stockholm";
 type DateRange = (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
@@ -36,6 +37,8 @@ enum Command {
     Status(StatusArgs),
     #[command(about = "Show turn duration and time-to-first-token statistics")]
     Latency(LatencyArgs),
+    #[command(about = "Show daily agent-hours and effective parallelism")]
+    Workflow(WorkflowArgs),
     #[command(about = "Estimate which kinds of content make up model input and cached input")]
     Breakdown(BreakdownArgs),
 }
@@ -145,6 +148,32 @@ struct LatencyArgs {
 }
 
 #[derive(Clone, Debug, Args)]
+struct WorkflowArgs {
+    #[command(flatten)]
+    source: SourceArgs,
+    #[command(flatten)]
+    range: RangeArgs,
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = PeriodArg::All,
+        help = "Period used to aggregate rows"
+    )]
+    group: PeriodArg,
+    #[arg(
+        long,
+        value_enum,
+        value_delimiter = ',',
+        help = "Optional secondary grouping dimensions"
+    )]
+    by: Vec<GroupArg>,
+    #[arg(long, value_enum, default_value_t = FormatArg::Table, help = "Output format")]
+    format: FormatArg,
+    #[arg(long, short = 'o', help = "Write output to a file instead of stdout")]
+    output: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Args)]
 struct BreakdownArgs {
     #[command(flatten)]
     source: SourceArgs,
@@ -219,9 +248,54 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(Command::Report(args)) => run_report(args),
         Some(Command::Status(args)) => run_status(args),
         Some(Command::Latency(args)) => run_latency(args),
+        Some(Command::Workflow(args)) => run_workflow(args),
         Some(Command::Breakdown(args)) => run_breakdown(args),
         None => run_report(cli.report),
     }
+}
+
+fn run_workflow(args: WorkflowArgs) -> Result<()> {
+    let timezone = parse_timezone(&args.source.timezone)?;
+    let (start, end) = resolve_range(&args.range, timezone)?;
+    let scan = scan(&args.source)?;
+    emit_scan_warnings(&scan);
+    let rows = workflow::aggregate(
+        scan.latencies,
+        start,
+        end,
+        timezone,
+        match args.group {
+            PeriodArg::All => PeriodGroup::All,
+            PeriodArg::Day => PeriodGroup::Day,
+            PeriodArg::Week => PeriodGroup::Week,
+            PeriodArg::Month => PeriodGroup::Month,
+        },
+        &args
+            .by
+            .iter()
+            .map(|value| match value {
+                GroupArg::Model => GroupBy::Model,
+                GroupArg::Effort => GroupBy::Effort,
+                GroupArg::Directory => GroupBy::Directory,
+                GroupArg::Session => GroupBy::Session,
+            })
+            .collect::<Vec<_>>(),
+    );
+    let output = workflow::render(
+        &rows,
+        match args.format {
+            FormatArg::Table => ReportFormat::Table,
+            FormatArg::Json => ReportFormat::Json,
+            FormatArg::Csv => ReportFormat::Csv,
+        },
+    )?;
+    if let Some(path) = args.output {
+        std::fs::write(&path, format!("{output}\n"))
+            .with_context(|| format!("failed to write {}", path.display()))?;
+    } else {
+        println!("{output}");
+    }
+    Ok(())
 }
 
 fn run_latency(args: LatencyArgs) -> Result<()> {

@@ -4,6 +4,7 @@ mod ingest;
 mod latency;
 mod pricing;
 mod report;
+mod workflow;
 
 use anyhow::Result;
 use clap::Parser;
